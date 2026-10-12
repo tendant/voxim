@@ -1,0 +1,12 @@
+Run the unit tests and fix the failures
+Rename the function parse config to load settings
+Open the README and add a section about installation
+Why is the build failing on the main branch
+Add a null check before calling user dot profile dot email
+Refactor the auth middleware to use async await
+Commit these changes with the message fix flaky login test
+Show me the diff for the last two commits
+Install the dependencies with npm and start the dev server
+Change the timeout from thirty seconds to two minutes
+Write a test for the tmux adapter when the pane is gone
+Revert the change to package dot json
