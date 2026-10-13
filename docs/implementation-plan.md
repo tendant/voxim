@@ -1,5 +1,7 @@
 # voxim — Implementation Plan
 
+**Status (2026-10-13):** steps 1–6 built; end-to-end dictation confirmed working on the installed `/Applications` build. Now dogfooding.
+
 **Date:** 2026-10-12 · Started from [voice-coding-agent-mvp-design.md](../voice-coding-agent-mvp-design.md); **re-scoped the same day to a generic voice input tool.**
 
 ## Scope
@@ -36,17 +38,18 @@ Support/    Log (no transcript contents), Metrics (events, summary, JSONL store)
 | Step | Deliverable | Acceptance |
 |---|---|---|
 | 1 ✅ | Project setup, audio capture, ASR spike | Local ASR works; Parakeet v2 chosen |
-| 2 🟡 | Hold fn → transcribe → paste at cursor; HUD; permission handling; clipboard restore | Works in VS Code, Safari/Chrome text field, Notes, Slack, Ghostty; clipboard unchanged afterwards; never presses Return |
-| 3 🟡 | Esc cancels while recording (swallowed only then); menu setup checklist for mic, Accessibility and speech model with fix-it buttons; Parakeet download/compile progress, Apple speech used meanwhile | No dead ends on a fresh install |
-| 4 🟡 | Smart formatting (menu toggle, default on): leading space after a word, lowercase first word mid-sentence (keeps I/acronyms/mixed case), terminal style — no trailing period, lowercase start — in known terminal apps. Context = ≤3 chars before the cursor via AX; unreadable context → transcript only trimmed | Inserted text reads naturally in prose and in shells |
-| 5 🟡 | Vocabulary as "when I say → type" replacement rules (Settings window; whole-word, case-insensitive, flexible spacing/hyphens, longest phrase first), applied before smart formatting. Acoustic biasing (FluidAudio CTC boosting, +~100 MB model) deferred | Day 1 misrecognitions (MUX→tmux, within PM→with npm) fixed by rules; homophones (pain/pane) out of reach |
-| 6 🟡 | Local metrics: one text-free event per push-to-talk (outcome, failure reason, engine, audio length, release→transcript and transcript→⌘V timings, word count) in `~/Library/Application Support/voxim/metrics.jsonl`, 90-day retention; menu "today" line; Settings › Usage tab (period, p50/p95, failures by reason, reset, reveal file). Then dogfooding | Daily-use report and go/no-go |
+| 2 ✅ | Hold fn → transcribe → paste at cursor; HUD; permission handling; clipboard restore | Works in VS Code, Safari/Chrome text field, Notes, Slack, Ghostty; clipboard unchanged afterwards; never presses Return |
+| 3 ✅ | Esc cancels while recording (swallowed only then); menu setup checklist for mic, Accessibility and speech model with fix-it buttons; Parakeet download/compile progress, Apple speech used meanwhile | No dead ends on a fresh install |
+| 4 ✅ | Smart formatting (menu toggle, default on): leading space after a word, lowercase first word mid-sentence (keeps I/acronyms/mixed case), terminal style — no trailing period, lowercase start — in known terminal apps. Context = ≤3 chars before the cursor via AX; unreadable context → transcript only trimmed | Inserted text reads naturally in prose and in shells |
+| 5 ✅ | Vocabulary as "when I say → type" replacement rules (Settings window; whole-word, case-insensitive, flexible spacing/hyphens, longest phrase first), applied before smart formatting. Acoustic biasing (FluidAudio CTC boosting, +~100 MB model) deferred | Day 1 misrecognitions (MUX→tmux, within PM→with npm) fixed by rules; homophones (pain/pane) out of reach |
+| 6 ✅ | Local metrics: one text-free event per push-to-talk (outcome, failure reason, engine, audio length, release→transcript and transcript→⌘V timings, word count) in `~/Library/Application Support/voxim/metrics.jsonl`, 90-day retention; menu "today" line; Settings › Usage tab (period, p50/p95, failures by reason, reset, reveal file). Then dogfooding | Daily-use report and go/no-go |
 
 ### Installable build
 
 - `scripts/install.sh`: Release build signed with the Developer ID Application identity (team `WJTDTA46K5`), checks (Developer ID authority, hardened runtime, microphone entitlement present, no `get-task-allow`), quits a running copy, installs to `/Applications`, launches. Build number = git commit count.
 - Entitlements come from `voxim.entitlements` (microphone only). `CODE_SIGN_INJECT_BASE_ENTITLEMENTS=NO` for the release build: plain `xcodebuild build` otherwise injects `get-task-allow` even in Release, and disabling injection also drops setting-generated entitlements — hence the explicit file.
 - Launch at login via `SMAppService.mainApp` (menu toggle, only offered for the `/Applications` copy). Newest launched instance asks older ones to quit, so the installed copy and an Xcode run never both type.
+- Debug builds use bundle ID `ai.weilabs.voxim.debug` ("voxim Dev"). With a shared ID, macOS kept one Accessibility grant whose code requirement matched only one signature (Apple Development vs Developer ID), so enabling it for one build silently broke the other. If a grant still looks on but voxim reports it missing: `tccutil reset Accessibility ai.weilabs.voxim`, relaunch, re-grant.
 - Not notarized: unnecessary for a locally built app (no quarantine). Needed before sharing a download with other people.
 
 ## Testing
@@ -80,3 +83,10 @@ Use voxim for daily work for a week, then read Settings › Usage (7 days) again
 | Where it fails | Failures by reason → next fixes (e.g. many "No focused field" → revisit focus detection) |
 
 Also note by hand when speaking helped or hurt versus typing; the metrics deliberately hold no text.
+
+## Next candidates (pick from dogfooding data)
+
+- **Pre-roll audio:** recording starts 300 ms after fn goes down, so the first syllable can be lost. Keep a short rolling buffer only while fn is held (still no recording at rest).
+- **Acoustic vocabulary biasing:** FluidAudio CTC boosting (+~100 MB model) if replacement rules aren't enough.
+- **Per-app paste timing:** tune the 250 ms clipboard-restore delay for apps that paste the old clipboard.
+- **Notarization:** only needed before sharing builds with other people.
