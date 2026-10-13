@@ -42,7 +42,10 @@ Measured on an M4 Max with synthesized speech (clean audio). Real-microphone acc
 
 ## Install
 
-There's no prebuilt download yet. Build from source (about a minute):
+**[Download the latest release](https://github.com/tendant/voxim/releases/latest)**, open the DMG and drag voxim to Applications. Releases are signed and notarized by Apple.
+
+<details>
+<summary>Build from source instead</summary>
 
 ```sh
 git clone https://github.com/tendant/voxim.git
@@ -50,9 +53,10 @@ cd voxim
 scripts/install.sh --adhoc     # no Apple Developer account needed
 ```
 
-With an Apple Developer ID certificate, `VOXIM_TEAM_ID=<your team> scripts/install.sh` signs the build properly, so macOS keeps voxim's permissions across reinstalls.
+With an Apple Developer ID certificate, `VOXIM_TEAM_ID=<your team> scripts/install.sh` signs the build properly, so macOS keeps voxim's permissions across reinstalls. Building requires Xcode 26.
+</details>
 
-**Requirements:** macOS 26 (Tahoe) on Apple silicon, and Xcode 26 to build.
+**Requirements:** macOS 26 (Tahoe) on Apple silicon.
 
 **First run:**
 
@@ -71,6 +75,8 @@ With an Apple Developer ID certificate, `VOXIM_TEAM_ID=<your team> scripts/insta
 ## Development
 
 Open `voxim.xcodeproj` and run the `voxim` scheme. Debug builds are a separate app ("voxim Dev", `ai.weilabs.voxim.debug`) with their own permissions, and the most recently launched copy takes over fn. Run the unit tests with `xcodebuild -scheme voxim -only-testing:voximTests test`.
+
+Releases: `scripts/release.sh <version>` builds, notarizes and publishes a DMG (`--dry-run` stops before notarization).
 
 Design notes and roadmap: [`docs/implementation-plan.md`](docs/implementation-plan.md).
 

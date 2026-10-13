@@ -5,6 +5,7 @@
 #   scripts/install.sh --build-only  build and verify the signature, don't install
 #   scripts/install.sh --adhoc       no Apple Developer account: ad-hoc signing
 #   VOXIM_TEAM_ID=XXXXXXXXXX scripts/install.sh   use your own Developer ID team
+#   VOXIM_VERSION=0.1.0 scripts/install.sh        override the marketing version (used by release.sh)
 #
 # Signing with a Developer ID identity keeps the app's code-signing requirement stable
 # across rebuilds, so macOS keeps the Microphone and Accessibility grants after reinstalling.
@@ -30,14 +31,17 @@ done
 
 if $ADHOC; then
     SIGNING=(CODE_SIGN_IDENTITY="-" DEVELOPMENT_TEAM="")
-elif security find-identity -v -p codesigning | grep -q "Developer ID Application: .*($TEAM_ID)"; then
-    SIGNING=(CODE_SIGN_IDENTITY="Developer ID Application" DEVELOPMENT_TEAM="$TEAM_ID")
+elif grep -q "Developer ID Application: .*($TEAM_ID)" <<<"$(security find-identity -v -p codesigning)"; then
+    # Secure timestamp: required for notarization, harmless otherwise.
+    SIGNING=(CODE_SIGN_IDENTITY="Developer ID Application" DEVELOPMENT_TEAM="$TEAM_ID" OTHER_CODE_SIGN_FLAGS="--timestamp")
 else
     echo "error: no 'Developer ID Application' identity for team $TEAM_ID in the keychain." >&2
     echo "       Set VOXIM_TEAM_ID to your team, or use --adhoc (permissions reset on each reinstall)." >&2
     exit 1
 fi
 
+VERSION_OVERRIDE=()
+[[ -n "${VOXIM_VERSION:-}" ]] && VERSION_OVERRIDE=(MARKETING_VERSION="$VOXIM_VERSION")
 BUILD_NUMBER="$(git -C "$ROOT" rev-list --count HEAD)"
 COMMIT="$(git -C "$ROOT" rev-parse --short HEAD)"
 echo "==> Building voxim (build $BUILD_NUMBER, $COMMIT)"
@@ -52,6 +56,7 @@ xcodebuild \
     "${SIGNING[@]}" \
     PROVISIONING_PROFILE_SPECIFIER="" \
     CURRENT_PROJECT_VERSION="$BUILD_NUMBER" \
+    ${VERSION_OVERRIDE[@]+"${VERSION_OVERRIDE[@]}"} \
     build
 
 echo "==> Verifying signature"
