@@ -78,3 +78,7 @@ Design notes and roadmap: [`docs/implementation-plan.md`](docs/implementation-pl
 
 - [FluidAudio](https://github.com/FluidInference/FluidAudio) (Apache-2.0) runs Parakeet on Core ML.
 - [Parakeet TDT 0.6B v2](https://huggingface.co/nvidia/parakeet-tdt-0.6b-v2) by NVIDIA (CC-BY-4.0) is the speech recognition model.
+
+## License
+
+voxim is released under the [MIT License](LICENSE). The Parakeet model it downloads is licensed separately by NVIDIA under CC-BY-4.0.
