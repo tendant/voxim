@@ -46,9 +46,16 @@ nonisolated enum AudioFormatConversion {
     }
 }
 
+/// Seam so the controller can be tested without a microphone.
+nonisolated protocol AudioCapturing: AnyObject {
+    func start() throws
+    /// Stops capture and returns everything recorded since `start()`.
+    func stop() -> AudioClip
+}
+
 /// Push-to-talk microphone capture. The engine runs only between `start()` and `stop()`;
 /// samples stay in memory and are handed off as an `AudioClip`.
-nonisolated final class AudioCapture: @unchecked Sendable {
+nonisolated final class AudioCapture: AudioCapturing, @unchecked Sendable {
     private let engine = AVAudioEngine()
     private let lock = NSLock()
     private var samples: [Float] = []
@@ -57,6 +64,9 @@ nonisolated final class AudioCapture: @unchecked Sendable {
     private let targetFormat = AVAudioFormat(
         commonFormat: .pcmFormatFloat32, sampleRate: AudioClip.sampleRate, channels: 1, interleaved: false
     )!
+
+    /// Granted already; never prompts.
+    static var isGranted: Bool { AVAudioApplication.shared.recordPermission == .granted }
 
     static func requestPermission() async -> Bool {
         switch AVAudioApplication.shared.recordPermission {

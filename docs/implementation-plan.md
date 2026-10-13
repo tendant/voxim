@@ -43,6 +43,7 @@ Support/    Log (no transcript contents), Metrics (events, summary, JSONL store)
 | 4 ✅ | Smart formatting (menu toggle, default on): leading space after a word, lowercase first word mid-sentence (keeps I/acronyms/mixed case), terminal style — no trailing period, lowercase start — in known terminal apps. Context = ≤3 chars before the cursor via AX; unreadable context → transcript only trimmed | Inserted text reads naturally in prose and in shells |
 | 5 ✅ | Vocabulary as "when I say → type" replacement rules (Settings window; whole-word, case-insensitive, flexible spacing/hyphens, longest phrase first), applied before smart formatting. Acoustic biasing (FluidAudio CTC boosting, +~100 MB model) deferred | Day 1 misrecognitions (MUX→tmux, within PM→with npm) fixed by rules; homophones (pain/pane) out of reach |
 | 6 ✅ | Local metrics: one text-free event per push-to-talk (outcome, failure reason, engine, audio length, release→transcript and transcript→⌘V timings, word count) in `~/Library/Application Support/voxim/metrics.jsonl`, 90-day retention; menu "today" line; Settings › Usage tab (period, p50/p95, failures by reason, reset, reveal file). Then dogfooding | Daily-use report and go/no-go |
+| 7 🟡 | Pre-roll (menu toggle, default on): mic starts the moment fn goes down alone (only if mic + Accessibility are already granted, no HUD); a tap or fn+key discards that audio unheard and records nothing in metrics; a qualifying hold keeps it as the start of the clip. Trade-offs: mic indicator flashes on every fn press; Bluetooth headsets may switch to call quality | First word no longer clipped |
 
 ### Installable build
 
@@ -55,6 +56,7 @@ Support/    Log (no transcript contents), Metrics (events, summary, JSONL store)
 ## Testing
 
 - Unit: `FnHoldDetector` (hold vs tap, fn as modifier, other modifiers, keys while recording, Esc cancel, tap reset); `ModelStatus` (late progress can't override ready).
+- Unit: `AppController` with fake mic/permissions/engine/sink (pre-roll kept through recording, tap discards unheard, toggle off, no mic grant → no pre-roll and no prompt, no Accessibility, Esc, fn during transcription).
 - Unit: metrics (summary/percentiles, persistence, 90-day pruning, corrupt line, reset, stored keys are text-free, error→reason mapping).
 - Unit: `ReplacementEngine` (Day 1 outputs, whole words, flexible spacing, longest-first, literal regex chars, Unicode boundaries).
 - Unit: `TextFormatter` (start of field, after sentence end, mid-sentence, special first words, brackets/prefixes, terminal style).
@@ -86,7 +88,6 @@ Also note by hand when speaking helped or hurt versus typing; the metrics delibe
 
 ## Next candidates (pick from dogfooding data)
 
-- **Pre-roll audio:** recording starts 300 ms after fn goes down, so the first syllable can be lost. Keep a short rolling buffer only while fn is held (still no recording at rest).
 - **Acoustic vocabulary biasing:** FluidAudio CTC boosting (+~100 MB model) if replacement rules aren't enough.
 - **Per-app paste timing:** tune the 250 ms clipboard-restore delay for apps that paste the old clipboard.
 - **Notarization:** only needed before sharing builds with other people.

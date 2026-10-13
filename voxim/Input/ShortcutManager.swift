@@ -17,19 +17,17 @@ final class ShortcutManager {
     /// fn must be held this long, alone, before recording starts.
     static let holdThreshold: Duration = .milliseconds(300)
 
-    private let onPress: () -> Void
-    private let onRelease: () -> Void
-    private let onCancel: () -> Void
+    /// Receives every push-to-talk action: `.arm` the moment fn goes down alone (pre-roll can
+    /// start), `.disarm` if it turns out to be a tap or a modifier, then `.press`/`.release`/`.cancel`.
+    private let onAction: (FnHoldDetector.Action) -> Void
     private var detector = FnHoldDetector()
     private var holdTimer: Task<Void, Never>?
     private var tap: CFMachPort?
     private var runLoopSource: CFRunLoopSource?
     private var retryTimer: Timer?
 
-    init(onPress: @escaping () -> Void, onRelease: @escaping () -> Void, onCancel: @escaping () -> Void) {
-        self.onPress = onPress
-        self.onRelease = onRelease
-        self.onCancel = onCancel
+    init(onAction: @escaping (FnHoldDetector.Action) -> Void) {
+        self.onAction = onAction
     }
 
     var isRunning: Bool { tap != nil }
@@ -96,6 +94,7 @@ final class ShortcutManager {
     }
 
     private func perform(_ action: FnHoldDetector.Action?) {
+        guard let action else { return }
         switch action {
         case .arm:
             holdTimer?.cancel()
@@ -109,14 +108,10 @@ final class ShortcutManager {
             holdTimer = nil
         case .press:
             holdTimer = nil
-            onPress()
-        case .release:
-            onRelease()
-        case .cancel:
-            onCancel()
-        case nil:
+        case .release, .cancel:
             break
         }
+        onAction(action)
     }
 }
 

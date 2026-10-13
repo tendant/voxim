@@ -19,9 +19,7 @@ struct voximApp: App {
         controller.onHUDVisibilityChange = { [weak hud] visible in
             if visible { hud?.show() } else { hud?.orderOut(nil) }
         }
-        let shortcuts = ShortcutManager(
-            onPress: controller.keyDown, onRelease: controller.keyUp, onCancel: controller.cancelRecording
-        )
+        let shortcuts = ShortcutManager(onAction: controller.handle)
         // fn+Space needs an event tap, which needs Accessibility; ask up front, then
         // ShortcutManager keeps retrying until access is granted.
         // Unit tests host inside this app; don't prompt or intercept keys there.

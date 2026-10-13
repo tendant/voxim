@@ -24,6 +24,18 @@ final class AppController {
     static let minimumHold: Duration = .milliseconds(250)
     /// UserDefaults key for context-aware cleanup (spacing, mid-sentence case, terminal style).
     static let smartFormattingKey = "smartFormatting"
+    /// UserDefaults key: start the microphone when fn goes down rather than when the hold qualifies.
+    static let preRollKey = "preRoll"
+
+    /// System access the controller needs; injectable so the flow can be tested headless.
+    struct Permissions {
+        var isAccessibilityTrusted: () -> Bool = { AXAccess.isTrusted }
+        var requestAccessibility: () -> Void = { AXAccess.requestTrust() }
+        /// Already granted; must not prompt (used for pre-roll on every fn press).
+        var isMicrophoneGranted: () -> Bool = { AudioCapture.isGranted }
+        /// May show the system prompt.
+        var requestMicrophone: () async -> Bool = { await AudioCapture.requestPermission() }
+    }
 
     private(set) var phase: Phase = .idle
     /// Last transcript that could not be typed; offered for copying. Cleared on the next recording.
@@ -35,26 +47,42 @@ final class AppController {
 
     private let transcriber: FallbackTranscriber
     private let sink: any DictationSink
-    private let capture = AudioCapture()
+    private let capture: any AudioCapturing
+    private let permissions: Permissions
+    private let defaults: UserDefaults
     private var pressStarted: ContinuousClock.Instant?
     private var keyHeld = false
     private var focusAtStart: FocusedApp?
+    /// Mic started on fn-down, before the hold qualified. Discarded on disarm.
+    private var preRolling = false
 
     /// Called whenever the HUD should change visibility.
     var onHUDVisibilityChange: ((Bool) -> Void)?
 
-    init(sink: any DictationSink = PasteInserter(), metrics: MetricsStore = MetricsStore()) {
+    init(
+        sink: any DictationSink = PasteInserter(),
+        metrics: MetricsStore = MetricsStore(),
+        capture: any AudioCapturing = AudioCapture(),
+        permissions: Permissions = Permissions(),
+        transcriber: FallbackTranscriber? = nil,
+        defaults: UserDefaults = .standard
+    ) {
         self.metrics = metrics
         let modelStatus = ModelStatus()
-        let parakeet = ParakeetTranscriber { event in
-            switch event {
-            case .downloading(let fraction): modelStatus.post(.downloading(fraction: fraction))
-            case .compiling: modelStatus.post(.compiling)
-            }
-        }
         self.modelStatus = modelStatus
-        self.transcriber = FallbackTranscriber(primary: parakeet, fallback: AppleSpeechTranscriber())
+        self.transcriber = transcriber ?? FallbackTranscriber(
+            primary: ParakeetTranscriber { event in
+                switch event {
+                case .downloading(let fraction): modelStatus.post(.downloading(fraction: fraction))
+                case .compiling: modelStatus.post(.compiling)
+                }
+            },
+            fallback: AppleSpeechTranscriber()
+        )
         self.sink = sink
+        self.capture = capture
+        self.permissions = permissions
+        self.defaults = defaults
 
         let transcriber = self.transcriber
         Task {
@@ -82,19 +110,62 @@ final class AppController {
 
     // MARK: Push-to-talk
 
+    func handle(_ action: FnHoldDetector.Action) {
+        switch action {
+        case .arm: armed()
+        case .disarm: disarmed()
+        case .press: keyDown()
+        case .release: keyUp()
+        case .cancel: cancelRecording()
+        }
+    }
+
+    private var isReady: Bool {
+        switch phase {
+        case .idle, .inserted, .failed: true
+        case .recording, .transcribing: false
+        }
+    }
+
+    /// fn went down alone: start the mic now so the first syllable isn't lost while waiting
+    /// out the hold threshold. Silent (no HUD) and only if both permissions are already granted;
+    /// anything else is handled by `keyDown()` once the hold qualifies.
+    func armed() {
+        guard defaults.object(forKey: Self.preRollKey) as? Bool ?? true,
+              isReady, !preRolling,
+              permissions.isAccessibilityTrusted(), permissions.isMicrophoneGranted()
+        else { return }
+        do {
+            try capture.start()
+            preRolling = true
+        } catch {
+            Log.app.error("pre-roll start failed: \(error.localizedDescription, privacy: .public)")
+        }
+    }
+
+    /// The fn press was a tap or a modifier: throw the pre-roll audio away unheard.
+    func disarmed() {
+        guard preRolling else { return }
+        preRolling = false
+        _ = capture.stop()
+    }
+
     func keyDown() {
         keyHeld = true
-        switch phase {
-        case .idle, .inserted, .failed: break
-        case .recording, .transcribing: return
+        guard isReady else { return }
+        if preRolling {
+            // Already capturing since fn-down; the clip keeps that audio.
+            preRolling = false
+            beginRecording()
+            return
         }
-        if !AXAccess.isTrusted {
-            AXAccess.requestTrust()
+        if !permissions.isAccessibilityTrusted() {
+            permissions.requestAccessibility()
             fail(InsertionError.accessibilityDenied)
             return
         }
         Task {
-            guard await AudioCapture.requestPermission() else {
+            guard await permissions.requestMicrophone() else {
                 fail(AudioCaptureError.microphoneDenied)
                 return
             }
@@ -102,14 +173,18 @@ final class AppController {
             guard keyHeld else { return }
             do {
                 try capture.start()
-                pressStarted = .now
-                focusAtStart = FocusedApp.current
-                undelivered = ""
-                setPhase(.recording)
+                beginRecording()
             } catch {
                 fail(error)
             }
         }
+    }
+
+    private func beginRecording() {
+        pressStarted = .now
+        focusAtStart = FocusedApp.current
+        undelivered = ""
+        setPhase(.recording)
     }
 
     func keyUp() {
@@ -170,7 +245,7 @@ final class AppController {
         let transcriptReady = ContinuousClock.now
 
         let corrected = replacements.apply(to: text)
-        let formatted = UserDefaults.standard.object(forKey: Self.smartFormattingKey) as? Bool ?? true
+        let formatted = defaults.object(forKey: Self.smartFormattingKey) as? Bool ?? true
             ? TextFormatter.format(corrected, context: FocusContext.current())
             : corrected.trimmed
 

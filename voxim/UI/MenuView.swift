@@ -8,6 +8,7 @@ import SwiftUI
 struct MenuView: View {
     @Bindable var controller: AppController
     @AppStorage(AppController.smartFormattingKey) private var smartFormatting = true
+    @AppStorage(AppController.preRollKey) private var preRoll = true
     @Environment(\.openSettings) private var openSettings
     @State private var launchAtLoginEnabled = false
 
@@ -45,6 +46,17 @@ struct MenuView: View {
                 VStack(alignment: .leading, spacing: 2) {
                     Text("Smart formatting")
                     Text("Adds a space and lowercases mid-sentence; terminal style (no trailing period, lowercase start) in terminal apps.")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
+            }
+            .toggleStyle(.switch)
+            .controlSize(.small)
+            Toggle(isOn: $preRoll) {
+                VStack(alignment: .leading, spacing: 2) {
+                    Text("Capture from fn press")
+                    Text("Starts the mic as soon as fn goes down so the first word isn't cut off. The mic indicator then flashes on every fn press, and Bluetooth headsets may briefly switch to call quality.")
                         .font(.caption)
                         .foregroundStyle(.secondary)
                         .fixedSize(horizontal: false, vertical: true)

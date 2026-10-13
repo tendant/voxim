@@ -20,7 +20,7 @@ First run:
 
 ## Use
 
-- Hold **fn** until "Listening…" appears, speak, release. **Esc** while listening cancels.
+- Hold **fn** until "Listening…" appears, speak, release. **Esc** while listening cancels. With **Capture from fn press** on (default), audio from the moment fn goes down is kept, so you can start talking right away.
 - voxim never presses Return. If it can't type (focus moved, password field, no text field), the transcript is offered to copy.
 - **Settings › Vocabulary**: "when I say → type" rules for words the recognizer gets wrong.
 - **Settings › Usage**: local counts and timings (never what you said).
