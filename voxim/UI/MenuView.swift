@@ -8,6 +8,7 @@ import SwiftUI
 struct MenuView: View {
     @Bindable var controller: AppController
     @AppStorage(AppController.smartFormattingKey) private var smartFormatting = true
+    @Environment(\.openSettings) private var openSettings
 
     var body: some View {
         VStack(alignment: .leading, spacing: 12) {
@@ -47,6 +48,15 @@ struct MenuView: View {
             }
             .toggleStyle(.switch)
             .controlSize(.small)
+            HStack {
+                Text(vocabularySummary).font(.callout)
+                Spacer()
+                Button("Vocabulary…") {
+                    // Menu-bar apps must activate first, or the window opens behind others.
+                    NSApplication.shared.activate()
+                    openSettings()
+                }
+            }
             if let action = GlobeKeySetting.conflictingAction {
                 Text("Your 🌐 key is set to “\(action)”, which also fires when you release fn. Set System Settings › Keyboard › “Press 🌐 key to” to Do Nothing.")
                     .font(.caption)
@@ -60,6 +70,14 @@ struct MenuView: View {
         }
         .padding(14)
         .frame(width: 320)
+    }
+
+    private var vocabularySummary: String {
+        switch controller.replacements.rules.count {
+        case 0: "No custom words"
+        case 1: "1 custom word"
+        case let n: "\(n) custom words"
+        }
     }
 
     @ViewBuilder private var status: some View {

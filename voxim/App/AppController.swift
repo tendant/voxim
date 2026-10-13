@@ -30,6 +30,7 @@ final class AppController {
     private(set) var undelivered = ""
     private(set) var activeEngine = ""
     let modelStatus: ModelStatus
+    let replacements = ReplacementStore()
 
     private let transcriber: FallbackTranscriber
     private let sink: any DictationSink
@@ -156,9 +157,10 @@ final class AppController {
             return
         }
 
+        let corrected = replacements.apply(to: text)
         let formatted = UserDefaults.standard.object(forKey: Self.smartFormattingKey) as? Bool ?? true
-            ? TextFormatter.format(text, context: FocusContext.current())
-            : text.trimmed
+            ? TextFormatter.format(corrected, context: FocusContext.current())
+            : corrected.trimmed
 
         do {
             try await sink.insert(formatted, expecting: focusAtStart)

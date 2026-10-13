@@ -42,6 +42,10 @@ struct voximApp: App {
             Image(systemName: menuBarSymbol)
         }
         .menuBarExtraStyle(.window)
+
+        Settings {
+            VocabularySettingsView(store: controller.replacements)
+        }
     }
 
     private var menuBarSymbol: String {

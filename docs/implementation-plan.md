@@ -26,8 +26,8 @@ A local-first macOS menu-bar dictation tool: **hold fn**, speak, release, and th
 App/        voximApp (MenuBarExtra + HUD wiring), AppController (idle→recording→transcribing→inserted|failed)
 Input/      ShortcutManager (fn event tap, Esc cancel, 🌐 setting check), FnHoldDetector, AudioCapture (16 kHz mono, memory only)
 ASR/        Transcriber, AppleSpeechTranscriber, ParakeetTranscriber, FallbackTranscriber, ModelStatus
-Dictation/  DictationSink, PasteInserter (clipboard snapshot/restore + ⌘V), AXAccess, FocusedApp, FocusContext (chars before cursor, terminal detection), TextFormatter
-UI/         MenuView (status, shortcut hint), SetupSection (mic / Accessibility / model checklist), StatusHUD (non-activating, never key)
+Dictation/  DictationSink, PasteInserter (clipboard snapshot/restore + ⌘V), AXAccess, FocusedApp, FocusContext (chars before cursor, terminal detection), TextFormatter, Replacements (rules + store)
+UI/         MenuView (status, shortcut hint), SetupSection (mic / Accessibility / model checklist), VocabularySettingsView (Settings window), StatusHUD (non-activating, never key)
 Support/    Log (no transcript contents), Duration helpers
 ```
 
@@ -39,12 +39,13 @@ Support/    Log (no transcript contents), Duration helpers
 | 2 🟡 | Hold fn → transcribe → paste at cursor; HUD; permission handling; clipboard restore | Works in VS Code, Safari/Chrome text field, Notes, Slack, Ghostty; clipboard unchanged afterwards; never presses Return |
 | 3 🟡 | Esc cancels while recording (swallowed only then); menu setup checklist for mic, Accessibility and speech model with fix-it buttons; Parakeet download/compile progress, Apple speech used meanwhile | No dead ends on a fresh install |
 | 4 🟡 | Smart formatting (menu toggle, default on): leading space after a word, lowercase first word mid-sentence (keeps I/acronyms/mixed case), terminal style — no trailing period, lowercase start — in known terminal apps. Context = ≤3 chars before the cursor via AX; unreadable context → transcript only trimmed | Inserted text reads naturally in prose and in shells |
-| 5 | Custom vocabulary / replacements (e.g. "tmux", project names) | Spike phrases misrecognized on Day 1 come out right |
+| 5 🟡 | Vocabulary as "when I say → type" replacement rules (Settings window; whole-word, case-insensitive, flexible spacing/hyphens, longest phrase first), applied before smart formatting. Acoustic biasing (FluidAudio CTC boosting, +~100 MB model) deferred | Day 1 misrecognitions (MUX→tmux, within PM→with npm) fixed by rules; homophones (pain/pane) out of reach |
 | 6 | Local metrics (counts, p50/p95 latency, failures by reason — never text), dogfooding | Daily-use report and go/no-go |
 
 ## Testing
 
 - Unit: `FnHoldDetector` (hold vs tap, fn as modifier, other modifiers, keys while recording, Esc cancel, tap reset); `ModelStatus` (late progress can't override ready).
+- Unit: `ReplacementEngine` (Day 1 outputs, whole words, flexible spacing, longest-first, literal regex chars, Unicode boundaries).
 - Unit: `TextFormatter` (start of field, after sentence end, mid-sentence, special first words, brackets/prefixes, terminal style).
 - Unit: `PasteInserter` with a private pasteboard and fake ⌘V poster (restore, transient marker, empty clipboard, clipboard changed meanwhile, secure input refused).
 - Manual matrix: target apps × {normal, focus switched mid-speech, password field, no focused field, Accessibility revoked, mic denied}.
