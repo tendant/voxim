@@ -31,3 +31,17 @@ Latency doesn't separate the engines: all three finish a 2–4 s utterance in un
 cd spikes/asr-bench && swift build -c release
 .build/release/asr-bench <dir-with-01.wav..12.wav> phrases.txt [apple] [parakeet-v2] [parakeet-v3]
 ```
+
+## Long dictation (2026-10-13)
+
+Same harness, three synthesized coding monologues (`spikes/asr-bench/long-phrases.txt`): 46 s / 136 words, 86 s / 266 words, and 133 s / 402 words (the first two joined). Batch transcription after release, as in the app.
+
+| Engine | WER | Release → text (46 s / 86 s / 133 s) | Words dropped or duplicated |
+|---|---|---|---|
+| Apple `SpeechTranscriber` | 3.5% | 491 / 907 / 1433 ms | none |
+| **Parakeet TDT v2** | **1.0%** | **130 / 207 / 302 ms** | **none** — word counts match the reference; differences are spellings only (`change log`, `canceling`, `1` for "one") |
+
+- Parakeet handles >2 minutes in one batch call (FluidAudio chunks internally) with no seam artifacts; peak memory of the whole bench process was ~130 MB.
+- Latency stays well under a second even at 2+ minutes, so streaming transcription isn't needed for the use case.
+- In the app, a 133 s clip is ~8.5 MB of Float32 samples held in memory until transcription — fine.
+- Same caveat as above: clean TTS audio, not a real microphone.

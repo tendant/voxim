@@ -1,30 +1,80 @@
-# voxim
+<p align="center">
+  <img src="docs/images/icon.png" width="128" height="128" alt="voxim icon">
+</p>
 
-Local push-to-talk dictation for macOS. Hold **fn**, speak, release — the text is typed at the cursor of whatever app has focus. Speech is transcribed on this Mac (Parakeet TDT v2, with Apple's on-device speech as fallback); audio is never stored or uploaded.
+<h1 align="center">voxim</h1>
+
+<p align="center">
+  <b>Hold fn. Speak. Release. Your words appear wherever you're typing.</b><br>
+  Private, on-device push-to-talk dictation for macOS.
+</p>
+
+---
+
+voxim is a tiny menu-bar app that turns the **fn** key into a push-to-talk button for every text field on your Mac: editors, browsers, chat apps, terminals. Speech is transcribed **locally** with NVIDIA's Parakeet model via Core ML. Nothing is uploaded, and no audio or text is ever stored.
+
+## Why voxim
+
+- **Fast.** The text is typed about 0.3 s after you let go, even after two minutes of talking.
+- **Accurate on developer speak.** It gets "README", "npm", "auth middleware" and "async/await" right, where the built-in engine stumbles (see [benchmarks](#benchmarks)).
+- **Private by design.** All transcription happens on your Mac. Audio is held in memory only until it's transcribed, and the optional usage stats contain counts and timings only, never what you said.
+- **Works everywhere you type.** It types at the cursor in any app. It never presses Return for you, so nothing gets sent by accident.
+- **Formats for where you are.** Mid-sentence it adds the space and drops the capital. In a terminal it drops the trailing period ("Git status." → `git status`).
+- **Teach it your words.** "When I say *T mux*, type *tmux*" rules fix the names and jargon it keeps getting wrong.
+- **Safe by default.** It won't type into password fields. If focus moved while you were talking, it hands you the text to copy instead of typing into the wrong app.
+
+## How it works
+
+1. **Hold fn.** The microphone starts the moment fn goes down, so your first word isn't clipped. Using fn for a shortcut (fn+←, fn+F5, …) never starts a dictation.
+2. **Speak.** A small "Listening…" bar shows that you're recording. **Esc** cancels.
+3. **Release.** Parakeet transcribes, your vocabulary rules and formatting are applied, and the text is pasted at the cursor. Your clipboard is restored right afterwards.
+
+## Benchmarks
+
+Measured on an M4 Max with synthesized speech (clean audio). Real-microphone accuracy will be lower. Details: [`docs/asr-spike.md`](docs/asr-spike.md).
+
+| | Parakeet TDT v2 (default) | Apple on-device (fallback) |
+|---|---|---|
+| Word error rate, short coding commands | **7.3%** | 15.5% |
+| Word error rate, 1–2 min monologues | **1.0%** | 3.5% |
+| Release → text, 3 s phrase | **~40 ms** | ~60 ms |
+| Release → text, 133 s monologue | **~0.3 s** | ~1.4 s |
 
 ## Install
 
+There's no prebuilt download yet. Build from source (about a minute):
+
 ```sh
-scripts/install.sh              # build Release (Developer ID signed), install to /Applications, launch
-scripts/install.sh --build-only # build and verify the signature only
+git clone https://github.com/tendant/voxim.git
+cd voxim
+scripts/install.sh --adhoc     # no Apple Developer account needed
 ```
 
-Requires Xcode 26, macOS 26, and a "Developer ID Application" identity for team `WJTDTA46K5` in the keychain. Reinstalling keeps the Microphone and Accessibility permissions, because the signing identity stays the same.
+With an Apple Developer ID certificate, `VOXIM_TEAM_ID=<your team> scripts/install.sh` signs the build properly, so macOS keeps voxim's permissions across reinstalls.
 
-First run:
+**Requirements:** macOS 26 (Tahoe) on Apple silicon, and Xcode 26 to build.
 
-1. Grant **Accessibility** when asked (needed to see the fn key and type into apps), and **Microphone** on the first dictation. The menu-bar checklist shows what's missing.
-2. Set System Settings › Keyboard › "Press 🌐 key to" to **Do Nothing**, or releasing fn also triggers that action.
-3. The speech model (~450 MB) downloads on first launch; Apple speech is used until it's ready.
-4. Optional: turn on **Launch at login** in the menu.
+**First run:**
 
-## Use
+1. Grant **Accessibility** (to see the fn key and type into apps) and **Microphone**. The menu-bar checklist shows anything missing.
+2. Set **System Settings › Keyboard › "Press 🌐 key to"** to **Do Nothing**. Otherwise releasing fn also triggers that action.
+3. The speech model (~450 MB) downloads once in the background. Apple's on-device speech is used until it's ready.
+4. Optional: turn on **Launch at login** from the menu.
 
-- Hold **fn** until "Listening…" appears, speak, release. **Esc** while listening cancels. With **Capture from fn press** on (default), audio from the moment fn goes down is kept, so you can start talking right away.
-- voxim never presses Return. If it can't type (focus moved, password field, no text field), the transcript is offered to copy.
-- **Settings › Vocabulary**: "when I say → type" rules for words the recognizer gets wrong.
-- **Settings › Usage**: local counts and timings (never what you said).
+## Settings
+
+- **Smart formatting:** context-aware spacing and capitalization, plus terminal style.
+- **Capture from fn press:** keeps audio from the moment fn goes down. Turn it off if you'd rather the mic indicator not flash on every fn press, or if your Bluetooth headset switches to call quality.
+- **Vocabulary:** "when I say → type" rules, with a live preview.
+- **Usage:** local success rate, latency percentiles and failure reasons for the last 90 days. Never any text.
 
 ## Development
 
-Open `voxim.xcodeproj` and run the `voxim` scheme. Running a copy from Xcode makes the installed copy quit (only one instance listens for fn at a time). Plan and decisions: [`docs/implementation-plan.md`](docs/implementation-plan.md).
+Open `voxim.xcodeproj` and run the `voxim` scheme. Debug builds are a separate app ("voxim Dev", `ai.weilabs.voxim.debug`) with their own permissions, and the most recently launched copy takes over fn. Run the unit tests with `xcodebuild -scheme voxim -only-testing:voximTests test`.
+
+Design notes and roadmap: [`docs/implementation-plan.md`](docs/implementation-plan.md).
+
+## Acknowledgements
+
+- [FluidAudio](https://github.com/FluidInference/FluidAudio) (Apache-2.0) runs Parakeet on Core ML.
+- [Parakeet TDT 0.6B v2](https://huggingface.co/nvidia/parakeet-tdt-0.6b-v2) by NVIDIA (CC-BY-4.0) is the speech recognition model.
