@@ -22,6 +22,8 @@ final class AppController {
 
     /// Presses shorter than this are treated as accidental taps and discarded.
     static let minimumHold: Duration = .milliseconds(250)
+    /// UserDefaults key for context-aware cleanup (spacing, mid-sentence case, terminal style).
+    static let smartFormattingKey = "smartFormatting"
 
     private(set) var phase: Phase = .idle
     /// Last transcript that could not be typed; offered for copying. Cleared on the next recording.
@@ -154,12 +156,16 @@ final class AppController {
             return
         }
 
+        let formatted = UserDefaults.standard.object(forKey: Self.smartFormattingKey) as? Bool ?? true
+            ? TextFormatter.format(text, context: FocusContext.current())
+            : text.trimmed
+
         do {
-            try await sink.insert(text, expecting: focusAtStart)
-            Log.app.info("inserted \(text.count) characters")
+            try await sink.insert(formatted, expecting: focusAtStart)
+            Log.app.info("inserted \(formatted.count) characters")
             setPhase(.inserted)
         } catch {
-            undelivered = text
+            undelivered = formatted.trimmed
             fail(error.localizedDescription)
         }
     }

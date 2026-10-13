@@ -7,6 +7,7 @@ import SwiftUI
 
 struct MenuView: View {
     @Bindable var controller: AppController
+    @AppStorage(AppController.smartFormattingKey) private var smartFormatting = true
 
     var body: some View {
         VStack(alignment: .leading, spacing: 12) {
@@ -35,6 +36,17 @@ struct MenuView: View {
                 .font(.caption)
                 .foregroundStyle(.secondary)
                 .fixedSize(horizontal: false, vertical: true)
+            Toggle(isOn: $smartFormatting) {
+                VStack(alignment: .leading, spacing: 2) {
+                    Text("Smart formatting")
+                    Text("Adds a space and lowercases mid-sentence; terminal style (no trailing period, lowercase start) in terminal apps.")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
+            }
+            .toggleStyle(.switch)
+            .controlSize(.small)
             if let action = GlobeKeySetting.conflictingAction {
                 Text("Your 🌐 key is set to “\(action)”, which also fires when you release fn. Set System Settings › Keyboard › “Press 🌐 key to” to Do Nothing.")
                     .font(.caption)
