@@ -9,6 +9,17 @@ let package = Package(
     ],
     targets: [
         .executableTarget(
+            name: "zh-bench",
+            dependencies: [.product(name: "FluidAudio", package: "FluidAudio")],
+            swiftSettings: [
+                .swiftLanguageMode(.v5),
+                .defaultIsolation(MainActor.self),
+                .enableUpcomingFeature("NonisolatedNonsendingByDefault"),
+                .enableUpcomingFeature("InferIsolatedConformances"),
+                .enableUpcomingFeature("MemberImportVisibility"),
+            ]
+        ),
+        .executableTarget(
             name: "asr-bench",
             dependencies: [.product(name: "FluidAudio", package: "FluidAudio")],
             // Mirror the app target so the shared voxim sources compile identically.

@@ -1,0 +1,29 @@
+# lang	length	text
+en	short	Run the tests
+en	short	Undo that
+en	short	Commit
+en	short	Open the README
+en	short	Yes please
+en	normal	Rename the function parse config to load settings
+en	normal	Why is the build failing on the main branch
+en	normal	Refactor the auth middleware to use async await
+en	normal	Install the dependencies with npm and start the dev server
+en	normal	Write a test for the login page and fix the flaky one
+zh	short	好的
+zh	short	撤销
+zh	short	提交代码
+zh	short	运行测试
+zh	short	再试一次
+zh	normal	帮我看一下为什么构建失败了
+zh	normal	把这个函数的名字改成加载配置
+zh	normal	先运行所有的测试然后修复失败的部分
+zh	normal	这个页面加载太慢了请帮我优化一下
+zh	normal	把刚才的修改提交到主分支上
+mix	short	打开 README
+mix	short	跑一下 tests
+mix	normal	帮我跑一下 unit tests 然后修复失败的
+mix	normal	把这个 function 改成 async 的
+mix	normal	用 npm 安装依赖然后启动 dev server
+mix	normal	这个 bug 在 main 分支上也有吗
+mix	normal	给 login API 加一个 test
+mix	normal	把 auth middleware 重构一下
