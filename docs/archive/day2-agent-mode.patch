@@ -1,0 +1,1594 @@
+diff --git a/docs/implementation-plan.md b/docs/implementation-plan.md
+index 96804e1..48daa8c 100644
+--- a/docs/implementation-plan.md
++++ b/docs/implementation-plan.md
+@@ -9,7 +9,8 @@ Implements [voice-coding-agent-mvp-design.md](../voice-coding-agent-mvp-design.m
+ - **Agent delivery:** Claude Code runs inside tmux, so `TmuxAdapter` is primary:
+   - Addressing: pane IDs (`%7`) are stable for the pane's lifetime and never reused within a tmux server run.
+   - Delivery: `tmux load-buffer -` → `paste-buffer -p -t %7` (bracketed paste; newlines don't submit early) → `send-keys -t %7 Enter`. Exit code 0 is the `injected_into_terminal` receipt.
+-  - Validation before every send: `tmux display -p -t %7 '#{pane_current_command}'` — pane exists and runs `claude`/`node`.
++  - Validation before every send: `tmux display-message -t %7` confirms the pane exists, then `ps` confirms a foreground (`+`) process named `claude` on its tty. (`pane_current_command` is unusable: Claude Code sets its process title to its version, e.g. `2.1.296`.)
++  - tmux is always invoked with `-u` and a printable field delimiter: GUI apps have no UTF-8 locale, and tmux then rewrites tabs and non-ASCII in format output to `_`.
+ - **Fallback:** `GhosttyAXAdapter` binds a specific window (pid + AX window), revalidates, raises, pastes, presses Enter. Best-effort; receipt is only `injected_into_terminal`.
+ - **App sandbox off** (AX insertion, synthetic keystrokes and spawning `tmux` are blocked under sandbox). Hardened runtime stays on.
+ 
+@@ -38,7 +39,7 @@ Support/    Permissions (mic + AXIsProcessTrusted), Metrics (counters + latency
+ | Days | Deliverable | Acceptance |
+ |---|---|---|
+ | 1 ✅ | Project settings; `AudioCapture` + `AppleSpeechTranscriber` behind a debug menu item; ASR spike Apple vs Parakeet on coding phrases | Local ASR works; numbers in `docs/asr-spike.md` → Parakeet TDT v2 default, Apple fallback |
+-| 2 | Hold ⌥⇧Space → record → transcribe → `PendingPanel` → `TmuxAdapter` to a chosen pane | "Run the unit tests and fix the failures" lands in Claude Code, submits only after ⏎ |
++| 2 🟡 | Hold ⌥⇧Space → record → transcribe → `PendingPanel` → `TmuxAdapter` to a chosen pane | "Run the unit tests and fix the failures" lands in Claude Code, submits only after ⏎ |
+ | 3–4 | Dictation (⌥Space): AX insert → paste fallback → copyable transcript on failure | Works in Ghostty, VS Code, Safari field; never presses Enter |
+ | 5 | Menu bar state icon (unmistakable while recording), permission onboarding, tmux pane picker | Denied mic/AX explains itself; no silent fallback |
+ | 6–7 | Pending panel edit/cancel/retry; empty transcript blocks send; auto-send pref default off | No path submits without confirmation |
+@@ -58,3 +59,7 @@ Scope cut order follows the design; targeting and explicit confirmation are neve
+ - Text already typed in Claude Code's input gets appended to; v1 warns rather than detects.
+ - AX insertion into Ghostty likely fails → terminal dictation uses paste; measure it.
+ - `SpeechTranscriber` may mangle code identifiers; the Day 1 spike decides whether Parakeet is needed.
++
++## Progress notes
++
++- **Day 2 (2026-10-12):** push-to-talk (KeyboardShortcuts, ⌥⇧Space) → Parakeet v2 with Apple fallback → non-activating pending panel (⏎ send, esc cancel, copy, retarget after failure) → `TmuxAdapter`. Menu lists tmux panes running Claude Code; binding persists and is never auto-switched. 10 unit tests (fake runner) + 1 opt-in live tmux test (`TEST_RUNNER_VOXIM_TMUX_IT=1`) pass. **Open:** end-to-end voice test into a real Claude Code pane (needs a human at the mic); confirm Claude Code submits on Enter 80 ms after a bracketed paste.
+diff --git a/spikes/asr-bench/Sources/asr-bench/ParakeetTranscriber.swift b/spikes/asr-bench/Sources/asr-bench/ParakeetTranscriber.swift
+deleted file mode 100644
+index d4f7fe6..0000000
+--- a/spikes/asr-bench/Sources/asr-bench/ParakeetTranscriber.swift
++++ /dev/null
+@@ -1,29 +0,0 @@
+-import FluidAudio
+-import Foundation
+-
+-/// Spike-only adapter; moves into the app if Parakeet wins.
+-actor ParakeetTranscriber: Transcriber {
+-    nonisolated let name: String
+-    private let version: AsrModelVersion
+-    private var manager: AsrManager?
+-
+-    init(version: AsrModelVersion, label: String) {
+-        self.version = version
+-        name = "Parakeet \(label)"
+-    }
+-
+-    func prepare() async throws {
+-        let models = try await AsrModels.downloadAndLoad(version: version)
+-        let manager = AsrManager(config: .default)
+-        try await manager.loadModels(models)
+-        self.manager = manager
+-    }
+-
+-    func transcribe(_ clip: AudioClip) async throws -> String {
+-        guard !clip.samples.isEmpty else { throw TranscriberError.emptyAudio }
+-        if manager == nil { try await prepare() }
+-        var state = try TdtDecoderState()
+-        return try await manager!.transcribe(clip.samples, decoderState: &state).text
+-            .trimmingCharacters(in: .whitespacesAndNewlines)
+-    }
+-}
+diff --git a/spikes/asr-bench/Sources/asr-bench/ParakeetTranscriber.swift b/spikes/asr-bench/Sources/asr-bench/ParakeetTranscriber.swift
+new file mode 120000
+index 0000000..da61053
+--- /dev/null
++++ b/spikes/asr-bench/Sources/asr-bench/ParakeetTranscriber.swift
+@@ -0,0 +1 @@
++../../../../voxim/ASR/ParakeetTranscriber.swift
+\ No newline at end of file
+diff --git a/voxim.xcodeproj/project.pbxproj b/voxim.xcodeproj/project.pbxproj
+index 6de095f..d9e27bc 100644
+--- a/voxim.xcodeproj/project.pbxproj
++++ b/voxim.xcodeproj/project.pbxproj
+@@ -6,6 +6,11 @@
+ 	objectVersion = 77;
+ 	objects = {
+ 
++/* Begin PBXBuildFile section */
++		AB5E00B0307D18AF00126E9D /* FluidAudio in Frameworks */ = {isa = PBXBuildFile; productRef = AB5E00B1307D18AF00126E9D /* FluidAudio */; };
++		AB5E00B3307D18AF00126E9D /* KeyboardShortcuts in Frameworks */ = {isa = PBXBuildFile; productRef = AB5E00B4307D18AF00126E9D /* KeyboardShortcuts */; };
++/* End PBXBuildFile section */
++
+ /* Begin PBXContainerItemProxy section */
+ 		AB5E0088307D18AF00126E9D /* PBXContainerItemProxy */ = {
+ 			isa = PBXContainerItemProxy;
+@@ -52,6 +57,8 @@
+ 			isa = PBXFrameworksBuildPhase;
+ 			buildActionMask = 2147483647;
+ 			files = (
++				AB5E00B0307D18AF00126E9D /* FluidAudio in Frameworks */,
++				AB5E00B3307D18AF00126E9D /* KeyboardShortcuts in Frameworks */,
+ 			);
+ 			runOnlyForDeploymentPostprocessing = 0;
+ 		};
+@@ -112,6 +119,8 @@
+ 			);
+ 			name = voxim;
+ 			packageProductDependencies = (
++				AB5E00B1307D18AF00126E9D /* FluidAudio */,
++				AB5E00B4307D18AF00126E9D /* KeyboardShortcuts */,
+ 			);
+ 			productName = voxim;
+ 			productReference = AB5E007A307D18AF00126E9D /* voxim.app */;
+@@ -195,6 +204,10 @@
+ 			);
+ 			mainGroup = AB5E0071307D18AF00126E9D;
+ 			minimizedProjectReferenceProxies = 1;
++			packageReferences = (
++				AB5E00B2307D18AF00126E9D /* XCRemoteSwiftPackageReference "FluidAudio" */,
++				AB5E00B5307D18AF00126E9D /* XCRemoteSwiftPackageReference "KeyboardShortcuts" */,
++			);
+ 			preferredProjectObjectVersion = 77;
+ 			productRefGroup = AB5E007B307D18AF00126E9D /* Products */;
+ 			projectDirPath = "";
+@@ -579,6 +592,38 @@
+ 			defaultConfigurationName = Release;
+ 		};
+ /* End XCConfigurationList section */
++
++/* Begin XCRemoteSwiftPackageReference section */
++		AB5E00B2307D18AF00126E9D /* XCRemoteSwiftPackageReference "FluidAudio" */ = {
++			isa = XCRemoteSwiftPackageReference;
++			repositoryURL = "https://github.com/FluidInference/FluidAudio.git";
++			requirement = {
++				kind = upToNextMinorVersion;
++				minimumVersion = 0.17.7;
++			};
++		};
++		AB5E00B5307D18AF00126E9D /* XCRemoteSwiftPackageReference "KeyboardShortcuts" */ = {
++			isa = XCRemoteSwiftPackageReference;
++			repositoryURL = "https://github.com/sindresorhus/KeyboardShortcuts";
++			requirement = {
++				kind = upToNextMinorVersion;
++				minimumVersion = 3.1.0;
++			};
++		};
++/* End XCRemoteSwiftPackageReference section */
++
++/* Begin XCSwiftPackageProductDependency section */
++		AB5E00B1307D18AF00126E9D /* FluidAudio */ = {
++			isa = XCSwiftPackageProductDependency;
++			package = AB5E00B2307D18AF00126E9D /* XCRemoteSwiftPackageReference "FluidAudio" */;
++			productName = FluidAudio;
++		};
++		AB5E00B4307D18AF00126E9D /* KeyboardShortcuts */ = {
++			isa = XCSwiftPackageProductDependency;
++			package = AB5E00B5307D18AF00126E9D /* XCRemoteSwiftPackageReference "KeyboardShortcuts" */;
++			productName = KeyboardShortcuts;
++		};
++/* End XCSwiftPackageProductDependency section */
+ 	};
+ 	rootObject = AB5E0072307D18AF00126E9D /* Project object */;
+ }
+diff --git a/voxim.xcodeproj/project.xcworkspace/xcshareddata/swiftpm/Package.resolved b/voxim.xcodeproj/project.xcworkspace/xcshareddata/swiftpm/Package.resolved
+new file mode 100644
+index 0000000..16cbf47
+--- /dev/null
++++ b/voxim.xcodeproj/project.xcworkspace/xcshareddata/swiftpm/Package.resolved
+@@ -0,0 +1,24 @@
++{
++  "originHash" : "5e27756389f47fc7d8ae52a60378b14156a84973552992609c1516ed97412780",
++  "pins" : [
++    {
++      "identity" : "fluidaudio",
++      "kind" : "remoteSourceControl",
++      "location" : "https://github.com/FluidInference/FluidAudio.git",
++      "state" : {
++        "revision" : "503b4bd1bbf7220882de39fe8ae6716aae4132da",
++        "version" : "0.17.7"
++      }
++    },
++    {
++      "identity" : "keyboardshortcuts",
++      "kind" : "remoteSourceControl",
++      "location" : "https://github.com/sindresorhus/KeyboardShortcuts",
++      "state" : {
++        "revision" : "772133d9dbe800fdac0473226822994c5c162c58",
++        "version" : "3.1.0"
++      }
++    }
++  ],
++  "version" : 3
++}
+diff --git a/voxim/ASR/FallbackTranscriber.swift b/voxim/ASR/FallbackTranscriber.swift
+new file mode 100644
+index 0000000..dd2484c
+--- /dev/null
++++ b/voxim/ASR/FallbackTranscriber.swift
+@@ -0,0 +1,57 @@
++//
++//  FallbackTranscriber.swift
++//  voxim
++//
++
++import Foundation
++import os
++
++/// Uses `primary` once it has loaded; until then (first-run model download) or if it
++/// fails to load, uses `fallback`. Both are local engines.
++actor FallbackTranscriber: Transcriber {
++    nonisolated let name = "Local ASR"
++
++    private let primary: any Transcriber
++    private let fallback: any Transcriber
++    private var primaryReady = false
++    private var primaryLoad: Task<Void, Never>?
++
++    init(primary: any Transcriber, fallback: any Transcriber) {
++        self.primary = primary
++        self.fallback = fallback
++    }
++
++    /// Name of the engine that would handle the next utterance.
++    var activeName: String { primaryReady ? primary.name : fallback.name }
++
++    func prepare() async throws {
++        if primaryLoad == nil {
++            let primary = self.primary
++            primaryLoad = Task {
++                do {
++                    try await primary.prepare()
++                    self.markPrimaryReady()
++                } catch {
++                    Log.asr.error("primary ASR failed to load: \(error.localizedDescription, privacy: .public)")
++                }
++            }
++        }
++        try await fallback.prepare()
++    }
++
++    func transcribe(_ clip: AudioClip) async throws -> String {
++        if primaryReady {
++            do {
++                return try await primary.transcribe(clip)
++            } catch {
++                Log.asr.error("primary ASR failed, using fallback: \(error.localizedDescription, privacy: .public)")
++            }
++        }
++        return try await fallback.transcribe(clip)
++    }
++
++    private func markPrimaryReady() {
++        primaryReady = true
++        Log.asr.info("primary ASR ready: \(self.primary.name, privacy: .public)")
++    }
++}
+diff --git a/voxim/ASR/ParakeetTranscriber.swift b/voxim/ASR/ParakeetTranscriber.swift
+new file mode 100644
+index 0000000..a5582f4
+--- /dev/null
++++ b/voxim/ASR/ParakeetTranscriber.swift
+@@ -0,0 +1,37 @@
++//
++//  ParakeetTranscriber.swift
++//  voxim
++//
++//  Parakeet TDT via FluidAudio (Apache-2.0). Models download from HuggingFace on first
++//  run into ~/Library/Application Support/FluidAudio/Models. See docs/asr-spike.md.
++//
++
++import FluidAudio
++import Foundation
++
++actor ParakeetTranscriber: Transcriber {
++    nonisolated let name: String
++    private let version: AsrModelVersion
++    private var manager: AsrManager?
++
++    init(version: AsrModelVersion = .v2, label: String = "TDT v2") {
++        self.version = version
++        name = "Parakeet \(label)"
++    }
++
++    func prepare() async throws {
++        guard manager == nil else { return }
++        let models = try await AsrModels.downloadAndLoad(version: version)
++        let manager = AsrManager(config: .default)
++        try await manager.loadModels(models)
++        self.manager = manager
++    }
++
++    func transcribe(_ clip: AudioClip) async throws -> String {
++        guard !clip.samples.isEmpty else { throw TranscriberError.emptyAudio }
++        if manager == nil { try await prepare() }
++        var state = try TdtDecoderState()
++        return try await manager!.transcribe(clip.samples, decoderState: &state).text
++            .trimmingCharacters(in: .whitespacesAndNewlines)
++    }
++}
+diff --git a/voxim/Agent/AgentAdapter.swift b/voxim/Agent/AgentAdapter.swift
+new file mode 100644
+index 0000000..dd241e1
+--- /dev/null
++++ b/voxim/Agent/AgentAdapter.swift
+@@ -0,0 +1,53 @@
++//
++//  AgentAdapter.swift
++//  voxim
++//
++
++import Foundation
++
++/// An explicitly bound coding-agent input. Never inferred from focus.
++nonisolated struct AgentTarget: Codable, Hashable, Sendable {
++    /// tmux pane id (e.g. `%7`); stable for the pane's lifetime and not reused by the server.
++    var paneID: String
++    /// Human-readable identity shown before sending, e.g. `0:2.0 · Plan to implement`.
++    var label: String
++}
++
++/// What the adapter can actually vouch for. Injection is not acceptance by the agent.
++nonisolated struct DeliveryReceipt: Sendable {
++    enum Boundary: String, Sendable {
++        case injectedIntoTerminal = "injected_into_terminal"
++    }
++
++    var target: AgentTarget
++    var boundary: Boundary
++    var date: Date
++}
++
++nonisolated enum AgentDeliveryError: LocalizedError, Equatable {
++    case tmuxNotFound
++    case targetGone(String)
++    case notAnAgent(String)
++    case emptyCommand
++    case commandFailed(String)
++
++    var errorDescription: String? {
++        switch self {
++        case .tmuxNotFound:
++            "tmux was not found in /opt/homebrew/bin, /usr/local/bin or /usr/bin."
++        case .targetGone(let label):
++            "The selected pane (\(label)) no longer exists. Choose a target again."
++        case .notAnAgent(let label):
++            "Claude Code is no longer running in the foreground of \(label). Choose a target again."
++        case .emptyCommand:
++            "There is nothing to send."
++        case .commandFailed(let message):
++            "tmux failed: \(message)"
++        }
++    }
++}
++
++nonisolated protocol AgentAdapter: Sendable {
++    func validate(_ target: AgentTarget) async throws
++    func submit(_ text: String, to target: AgentTarget) async throws -> DeliveryReceipt
++}
+diff --git a/voxim/Agent/TargetManager.swift b/voxim/Agent/TargetManager.swift
+new file mode 100644
+index 0000000..a2ed3b4
+--- /dev/null
++++ b/voxim/Agent/TargetManager.swift
+@@ -0,0 +1,67 @@
++//
++//  TargetManager.swift
++//  voxim
++//
++
++import Foundation
++import Observation
++
++/// Holds the explicitly selected agent target. Never auto-selects or re-routes:
++/// if the bound pane disappears, the binding stays and delivery fails until the user re-selects.
++@Observable
++final class TargetManager {
++    private static let defaultsKey = "agentTarget"
++
++    private(set) var panes: [TmuxPane] = []
++    private(set) var listError: String?
++    private(set) var target: AgentTarget? {
++        didSet { persist() }
++    }
++
++    let adapter: TmuxAdapter
++
++    init(adapter: TmuxAdapter = TmuxAdapter()) {
++        self.adapter = adapter
++        if let data = UserDefaults.standard.data(forKey: Self.defaultsKey) {
++            target = try? JSONDecoder().decode(AgentTarget.self, from: data)
++        }
++    }
++
++    var agentPanes: [TmuxPane] { panes.filter(\.isAgent) }
++
++    /// True when the last refresh no longer sees the bound pane running an agent.
++    var isTargetStale: Bool {
++        guard let target, listError == nil else { return false }
++        return !agentPanes.contains { $0.id == target.paneID }
++    }
++
++    func refresh() async {
++        do {
++            panes = try await adapter.listPanes()
++            listError = nil
++            // Keep the label current (titles change as Claude works) without changing the binding.
++            if let target, let pane = panes.first(where: { $0.id == target.paneID }), pane.isAgent {
++                self.target = pane.target
++            }
++        } catch {
++            panes = []
++            listError = error.localizedDescription
++        }
++    }
++
++    func select(_ pane: TmuxPane) {
++        target = pane.target
++    }
++
++    func clear() {
++        target = nil
++    }
++
++    private func persist() {
++        if let target, let data = try? JSONEncoder().encode(target) {
++            UserDefaults.standard.set(data, forKey: Self.defaultsKey)
++        } else {
++            UserDefaults.standard.removeObject(forKey: Self.defaultsKey)
++        }
++    }
++}
+diff --git a/voxim/Agent/TmuxAdapter.swift b/voxim/Agent/TmuxAdapter.swift
+new file mode 100644
+index 0000000..b340495
+--- /dev/null
++++ b/voxim/Agent/TmuxAdapter.swift
+@@ -0,0 +1,157 @@
++//
++//  TmuxAdapter.swift
++//  voxim
++//
++//  Delivers confirmed commands to an explicitly bound tmux pane running Claude Code.
++//
++
++import Foundation
++import os
++
++nonisolated struct TmuxPane: Hashable, Sendable, Identifiable {
++    var id: String          // pane id, e.g. %7
++    var location: String    // session:window.pane
++    var tty: String         // e.g. ttys008
++    var title: String
++    var isAgent: Bool
++
++    var label: String {
++        // Claude Code prefixes its terminal title with a status glyph (✳, spinner frames).
++        let cleaned = title.drop { !$0.isLetter && !$0.isNumber }
++        return cleaned.isEmpty ? location : "\(location) · \(cleaned)"
++    }
++
++    var target: AgentTarget { AgentTarget(paneID: id, label: label) }
++}
++
++nonisolated struct TmuxAdapter: AgentAdapter {
++    static let candidatePaths = ["/opt/homebrew/bin/tmux", "/usr/local/bin/tmux", "/usr/bin/tmux"]
++    /// Foreground process names that identify a supported coding agent.
++    static let agentCommands: Set<String> = ["claude"]
++
++    /// GUI apps run without a UTF-8 locale, where tmux rewrites control characters (tabs) and
++    /// non-ASCII to `_`. So: printable delimiter, `-u` for UTF-8, and free-form title last.
++    static let fieldDelimiter = "|~|"
++    private static let paneFormat = ["#{pane_id}", "#{session_name}:#{window_index}.#{pane_index}", "#{pane_tty}", "#{pane_title}"]
++        .joined(separator: fieldDelimiter)
++
++    let runner: any ProcessRunning
++    let tmuxPath: URL?
++
++    init(
++        runner: any ProcessRunning = SystemProcessRunner(),
++        tmuxPath: URL? = TmuxAdapter.candidatePaths.first { FileManager.default.isExecutableFile(atPath: $0) }
++            .map(URL.init(fileURLWithPath:))
++    ) {
++        self.runner = runner
++        self.tmuxPath = tmuxPath
++    }
++
++    // MARK: Discovery
++
++    func listPanes() async throws -> [TmuxPane] {
++        let result = try await tmux(["list-panes", "-a", "-F", Self.paneFormat])
++        guard result.status == 0 else {
++            // No server running means no panes, not an error worth surfacing.
++            if result.stderr.contains("no server running") || result.stderr.contains("error connecting") { return [] }
++            throw AgentDeliveryError.commandFailed(result.stderr.trimmed)
++        }
++        let agentTTYs = try await foregroundAgentTTYs()
++        return result.stdout.split(separator: "\n").compactMap { line in
++            Self.parsePane(String(line), agentTTYs: agentTTYs)
++        }
++    }
++
++    // MARK: AgentAdapter
++
++    func validate(_ target: AgentTarget) async throws {
++        _ = try await validatedPane(target)
++    }
++
++    func submit(_ text: String, to target: AgentTarget) async throws -> DeliveryReceipt {
++        let command = Self.sanitize(text)
++        guard !command.isEmpty else { throw AgentDeliveryError.emptyCommand }
++        let pane = try await validatedPane(target)
++
++        let buffer = "voxim-\(UUID().uuidString)"
++        try await check(tmux(["load-buffer", "-b", buffer, "-"], stdin: Data(command.utf8)))
++        do {
++            // -p: bracketed paste so embedded newlines don't submit early; -d: delete buffer after.
++            try await check(tmux(["paste-buffer", "-p", "-d", "-b", buffer, "-t", pane.id]))
++        } catch {
++            _ = try? await tmux(["delete-buffer", "-b", buffer])
++            throw error
++        }
++        // Give the TUI a beat to process the paste before Enter arrives.
++        try await Task.sleep(for: .milliseconds(80))
++        try await check(tmux(["send-keys", "-t", pane.id, "Enter"]))
++        Log.agent.info("delivered to pane \(pane.id, privacy: .public) boundary=injected_into_terminal")
++        return DeliveryReceipt(target: target, boundary: .injectedIntoTerminal, date: .now)
++    }
++
++    // MARK: Internals
++
++    private func validatedPane(_ target: AgentTarget) async throws -> TmuxPane {
++        let result = try await tmux(["display-message", "-p", "-t", target.paneID, Self.paneFormat])
++        guard result.status == 0,
++              let pane = Self.parsePane(result.stdout.trimmed, agentTTYs: []),
++              pane.id == target.paneID
++        else { throw AgentDeliveryError.targetGone(target.label) }
++
++        guard try await foregroundAgentTTYs().contains(pane.tty) else {
++            throw AgentDeliveryError.notAnAgent(target.label)
++        }
++        return pane
++    }
++
++    /// TTYs whose foreground process group contains a known agent binary.
++    private func foregroundAgentTTYs() async throws -> Set<String> {
++        let ps = try await runner.run(URL(fileURLWithPath: "/bin/ps"), ["-A", "-o", "tty=,stat=,comm="], stdin: nil)
++        return Self.parseAgentTTYs(ps.stdout)
++    }
++
++    private func tmux(_ arguments: [String], stdin: Data? = nil) async throws -> ProcessResult {
++        guard let tmuxPath else { throw AgentDeliveryError.tmuxNotFound }
++        return try await runner.run(tmuxPath, ["-u"] + arguments, stdin: stdin)
++    }
++
++    private func check(_ result: ProcessResult) throws {
++        guard result.status == 0 else { throw AgentDeliveryError.commandFailed(result.stderr.trimmed) }
++    }
++
++    static func parsePane(_ line: String, agentTTYs: Set<String>) -> TmuxPane? {
++        let fields = line.split(separator: fieldDelimiter, maxSplits: 3, omittingEmptySubsequences: false).map(String.init)
++        guard fields.count >= 3, fields[0].hasPrefix("%") else { return nil }
++        let tty = fields[2].replacingOccurrences(of: "/dev/", with: "")
++        return TmuxPane(
++            id: fields[0],
++            location: fields[1],
++            tty: tty,
++            title: fields.count > 3 ? fields[3] : "",
++            isAgent: agentTTYs.contains(tty)
++        )
++    }
++
++    static func parseAgentTTYs(_ psOutput: String) -> Set<String> {
++        var ttys: Set<String> = []
++        for line in psOutput.split(separator: "\n") {
++            let parts = line.split(separator: " ", maxSplits: 2, omittingEmptySubsequences: true)
++            guard parts.count == 3, parts[1].contains("+") else { continue }
++            let name = (String(parts[2]).trimmed as NSString).lastPathComponent
++            if agentCommands.contains(name) { ttys.insert(String(parts[0])) }
++        }
++        return ttys
++    }
++
++    /// Recognized speech is user input, but it must not carry terminal control sequences
++    /// (e.g. an ESC that ends bracketed paste early). Keep newlines and tabs only.
++    static func sanitize(_ text: String) -> String {
++        String(String.UnicodeScalarView(text.unicodeScalars.filter { scalar in
++            scalar == "\n" || scalar == "\t" || !(scalar.properties.generalCategory == .control)
++        })).trimmed
++    }
++}
++
++extension String {
++    nonisolated var trimmed: String { trimmingCharacters(in: .whitespacesAndNewlines) }
++}
+diff --git a/voxim/App/AppController.swift b/voxim/App/AppController.swift
+new file mode 100644
+index 0000000..6726191
+--- /dev/null
++++ b/voxim/App/AppController.swift
+@@ -0,0 +1,186 @@
++//
++//  AppController.swift
++//  voxim
++//
++//  Agent mode: hold shortcut → record → transcribe → editable pending command →
++//  explicit confirm → deliver to the bound tmux pane.
++//
++
++import Foundation
++import os
++import Observation
++
++@Observable
++final class AppController {
++    enum Phase: Equatable {
++        case idle
++        case recording
++        case transcribing
++        case pending
++        case sending
++        case sent(String)
++        case failed(String)
++    }
++
++    /// Presses shorter than this are treated as accidental taps and discarded.
++    static let minimumHold: Duration = .milliseconds(250)
++
++    private(set) var phase: Phase = .idle
++    /// Editable pending command. Retained after a failed delivery so it can be retried or copied.
++    var pendingText = ""
++    private(set) var activeEngine = ""
++    /// Target captured when recording started; delivery re-validates it, and never substitutes another.
++    private(set) var pendingTarget: AgentTarget?
++
++    let targets: TargetManager
++    private let transcriber: FallbackTranscriber
++    private let capture = AudioCapture()
++    private var pressStarted: ContinuousClock.Instant?
++    private var keyHeld = false
++
++    /// Called when the pending panel should be shown or hidden.
++    var onPanelVisibilityChange: ((Bool) -> Void)?
++
++    init(
++        targets: TargetManager = TargetManager(),
++        transcriber: FallbackTranscriber = FallbackTranscriber(
++            primary: ParakeetTranscriber(), fallback: AppleSpeechTranscriber()
++        )
++    ) {
++        self.targets = targets
++        self.transcriber = transcriber
++        Task {
++            do {
++                try await transcriber.prepare()
++            } catch {
++                phase = .failed(error.localizedDescription)
++            }
++            await refreshEngineName()
++            await targets.refresh()
++        }
++    }
++
++    var isPanelVisible: Bool {
++        switch phase {
++        case .recording, .transcribing, .pending, .sending: true
++        case .failed: !pendingText.isEmpty
++        case .idle, .sent: false
++        }
++    }
++
++    // MARK: Push-to-talk
++
++    func agentKeyDown() {
++        keyHeld = true
++        switch phase {
++        case .idle, .sent, .failed: break
++        case .recording, .transcribing, .pending, .sending: return
++        }
++        guard let target = targets.target else {
++            fail("Choose a Claude Code pane from the voxim menu first.", keepText: false)
++            return
++        }
++        Task {
++            guard await AudioCapture.requestPermission() else {
++                fail(AudioCaptureError.microphoneDenied.localizedDescription, keepText: false)
++                return
++            }
++            // Released while the permission check was pending: don't start a recording.
++            guard keyHeld else { return }
++            do {
++                try capture.start()
++                pressStarted = .now
++                pendingTarget = target
++                pendingText = ""
++                setPhase(.recording)
++            } catch {
++                fail(error.localizedDescription, keepText: false)
++            }
++        }
++    }
++
++    func agentKeyUp() {
++        keyHeld = false
++        guard phase == .recording else { return }
++        let clip = capture.stop()
++        let held = pressStarted.map { ContinuousClock.now - $0 } ?? .zero
++        pressStarted = nil
++        guard held >= Self.minimumHold else {
++            setPhase(.idle)
++            return
++        }
++        setPhase(.transcribing)
++        Task {
++            let started = ContinuousClock.now
++            do {
++                let text = try await transcriber.transcribe(clip)
++                let elapsedMS = (ContinuousClock.now - started).timeInterval * 1000
++                Log.asr.info("transcribed \(clip.duration, format: .fixed(precision: 1))s audio in \(elapsedMS, format: .fixed(precision: 0)) ms")
++                await refreshEngineName()
++                guard !text.isEmpty else {
++                    fail("Nothing was recognized. Hold the shortcut and try again.", keepText: false)
++                    return
++                }
++                pendingText = text
++                setPhase(.pending)
++            } catch {
++                fail(error.localizedDescription, keepText: false)
++            }
++        }
++    }
++
++    // MARK: Pending command
++
++    func confirmSend() {
++        switch phase {
++        case .pending, .failed: break
++        default: return
++        }
++        guard let target = pendingTarget ?? targets.target else {
++            fail("Choose a Claude Code pane from the voxim menu first.", keepText: true)
++            return
++        }
++        let text = pendingText.trimmed
++        guard !text.isEmpty else { return }
++        setPhase(.sending)
++        Task {
++            do {
++                let receipt = try await targets.adapter.submit(text, to: target)
++                pendingText = ""
++                pendingTarget = nil
++                setPhase(.sent(receipt.target.label))
++            } catch {
++                fail(error.localizedDescription, keepText: true)
++                await targets.refresh()
++            }
++        }
++    }
++
++    func cancel() {
++        if phase == .recording { _ = capture.stop() }
++        pendingText = ""
++        pendingTarget = nil
++        setPhase(.idle)
++    }
++
++    /// After a stale-target failure the user re-selects; retry goes to the newly chosen pane.
++    func retarget() {
++        pendingTarget = targets.target
++    }
++
++    // MARK: Helpers
++
++    private func fail(_ message: String, keepText: Bool) {
++        if !keepText { pendingText = "" }
++        setPhase(.failed(message))
++    }
++
++    private func setPhase(_ newPhase: Phase) {
++        phase = newPhase
++        onPanelVisibilityChange?(isPanelVisible)
++    }
++
++    private func refreshEngineName() async {
++        activeEngine = await transcriber.activeName
++    }
++}
+diff --git a/voxim/App/voximApp.swift b/voxim/App/voximApp.swift
+index 2e58d6f..8348caa 100644
+--- a/voxim/App/voximApp.swift
++++ b/voxim/App/voximApp.swift
+@@ -9,14 +9,39 @@ import SwiftUI
+ 
+ @main
+ struct voximApp: App {
+-    @State private var debugModel = ASRDebugModel()
++    @State private var controller: AppController
++    private let panel: PendingPanel
++
++    init() {
++        let controller = AppController()
++        let panel = PendingPanel(controller: controller)
++        controller.onPanelVisibilityChange = { [weak panel, weak controller] visible in
++            guard let panel else { return }
++            if visible {
++                panel.show(focus: controller?.phase == .pending)
++            } else {
++                panel.orderOut(nil)
++            }
++        }
++        ShortcutManager.register(controller)
++        _controller = State(initialValue: controller)
++        self.panel = panel
++    }
+ 
+     var body: some Scene {
+         MenuBarExtra {
+-            ASRDebugView(model: debugModel)
++            MenuView(controller: controller)
+         } label: {
+-            Image(systemName: debugModel.phase == .recording ? "mic.fill" : "mic")
++            Image(systemName: menuBarSymbol)
+         }
+         .menuBarExtraStyle(.window)
+     }
++
++    private var menuBarSymbol: String {
++        switch controller.phase {
++        case .recording: "mic.fill"
++        case .failed: "mic.badge.xmark"
++        default: "mic"
++        }
++    }
+ }
+diff --git a/voxim/Input/ShortcutManager.swift b/voxim/Input/ShortcutManager.swift
+new file mode 100644
+index 0000000..c246290
+--- /dev/null
++++ b/voxim/Input/ShortcutManager.swift
+@@ -0,0 +1,20 @@
++//
++//  ShortcutManager.swift
++//  voxim
++//
++
++import AppKit
++import KeyboardShortcuts
++
++extension KeyboardShortcuts.Name {
++    /// Agent mode push-to-talk. Default ⌥⇧Space; remappable in the menu.
++    static let agentPushToTalk = Self("agentPushToTalk", initial: .init(.space, modifiers: [.option, .shift]))
++}
++
++/// Registers system-wide push-to-talk hotkeys (Carbon hotkeys; no Accessibility permission needed).
++enum ShortcutManager {
++    static func register(_ controller: AppController) {
++        KeyboardShortcuts.onKeyDown(for: .agentPushToTalk) { controller.agentKeyDown() }
++        KeyboardShortcuts.onKeyUp(for: .agentPushToTalk) { controller.agentKeyUp() }
++    }
++}
+diff --git a/voxim/Support/Duration+TimeInterval.swift b/voxim/Support/Duration+TimeInterval.swift
+new file mode 100644
+index 0000000..9b458ea
+--- /dev/null
++++ b/voxim/Support/Duration+TimeInterval.swift
+@@ -0,0 +1,13 @@
++//
++//  Duration+TimeInterval.swift
++//  voxim
++//
++
++import Foundation
++
++extension Duration {
++    nonisolated var timeInterval: TimeInterval {
++        let (seconds, attoseconds) = components
++        return Double(seconds) + Double(attoseconds) / 1e18
++    }
++}
+diff --git a/voxim/Support/Log.swift b/voxim/Support/Log.swift
+new file mode 100644
+index 0000000..4c97229
+--- /dev/null
++++ b/voxim/Support/Log.swift
+@@ -0,0 +1,14 @@
++//
++//  Log.swift
++//  voxim
++//
++//  Never log transcript text, selected text, or clipboard contents.
++//
++
++import os
++
++nonisolated enum Log {
++    static let app = Logger(subsystem: "ai.weilabs.voxim", category: "app")
++    static let agent = Logger(subsystem: "ai.weilabs.voxim", category: "agent")
++    static let asr = Logger(subsystem: "ai.weilabs.voxim", category: "asr")
++}
+diff --git a/voxim/Support/ProcessRunner.swift b/voxim/Support/ProcessRunner.swift
+new file mode 100644
+index 0000000..62ee09b
+--- /dev/null
++++ b/voxim/Support/ProcessRunner.swift
+@@ -0,0 +1,43 @@
++//
++//  ProcessRunner.swift
++//  voxim
++//
++
++import Foundation
++
++nonisolated struct ProcessResult: Sendable {
++    var status: Int32
++    var stdout: String
++    var stderr: String
++}
++
++/// Seam for running helper binaries (tmux, ps) so adapters can be unit tested.
++nonisolated protocol ProcessRunning: Sendable {
++    func run(_ executable: URL, _ arguments: [String], stdin: Data?) async throws -> ProcessResult
++}
++
++nonisolated struct SystemProcessRunner: ProcessRunning {
++    func run(_ executable: URL, _ arguments: [String], stdin: Data? = nil) async throws -> ProcessResult {
++        try await Task.detached {
++            let process = Process()
++            process.executableURL = executable
++            process.arguments = arguments
++            let out = Pipe(), err = Pipe(), input = Pipe()
++            process.standardOutput = out
++            process.standardError = err
++            process.standardInput = input
++            try process.run()
++            if let stdin { input.fileHandleForWriting.write(stdin) }
++            try input.fileHandleForWriting.close()
++            // Outputs here are small (pane lists, ps rows), so sequential reads can't fill a pipe.
++            let stdout = out.fileHandleForReading.readDataToEndOfFile()
++            let stderr = err.fileHandleForReading.readDataToEndOfFile()
++            process.waitUntilExit()
++            return ProcessResult(
++                status: process.terminationStatus,
++                stdout: String(decoding: stdout, as: UTF8.self),
++                stderr: String(decoding: stderr, as: UTF8.self)
++            )
++        }.value
++    }
++}
+diff --git a/voxim/UI/ASRDebugModel.swift b/voxim/UI/ASRDebugModel.swift
+deleted file mode 100644
+index ab59ffd..0000000
+--- a/voxim/UI/ASRDebugModel.swift
++++ /dev/null
+@@ -1,87 +0,0 @@
+-//
+-//  ASRDebugModel.swift
+-//  voxim
+-//
+-//  Day 1 harness: record from the menu bar, transcribe locally, show latency.
+-//  Replaced by AppController + push-to-talk on Day 2.
+-//
+-
+-import Foundation
+-import Observation
+-
+-@Observable
+-final class ASRDebugModel {
+-    enum Phase: Equatable {
+-        case preparing
+-        case idle
+-        case recording
+-        case transcribing
+-        case failed(String)
+-    }
+-
+-    private(set) var phase: Phase = .preparing
+-    private(set) var transcript = ""
+-    private(set) var clipDuration: TimeInterval = 0
+-    private(set) var latency: TimeInterval = 0
+-
+-    let transcriber: any Transcriber
+-    private let capture = AudioCapture()
+-
+-    init(transcriber: any Transcriber = AppleSpeechTranscriber()) {
+-        self.transcriber = transcriber
+-        Task { await prepare() }
+-    }
+-
+-    func prepare() async {
+-        phase = .preparing
+-        do {
+-            try await transcriber.prepare()
+-            phase = .idle
+-        } catch {
+-            phase = .failed(error.localizedDescription)
+-        }
+-    }
+-
+-    func toggleRecording() {
+-        switch phase {
+-        case .recording: Task { await stopAndTranscribe() }
+-        case .idle, .failed: Task { await startRecording() }
+-        case .preparing, .transcribing: break
+-        }
+-    }
+-
+-    private func startRecording() async {
+-        guard await AudioCapture.requestPermission() else {
+-            phase = .failed(AudioCaptureError.microphoneDenied.localizedDescription)
+-            return
+-        }
+-        do {
+-            try capture.start()
+-            phase = .recording
+-        } catch {
+-            phase = .failed(error.localizedDescription)
+-        }
+-    }
+-
+-    private func stopAndTranscribe() async {
+-        let clip = capture.stop()
+-        clipDuration = clip.duration
+-        phase = .transcribing
+-        let started = ContinuousClock.now
+-        do {
+-            let text = try await transcriber.transcribe(clip)
+-            latency = (ContinuousClock.now - started).timeInterval
+-            transcript = text
+-            phase = text.isEmpty ? .failed("Nothing was recognized. Try again.") : .idle
+-        } catch {
+-            phase = .failed(error.localizedDescription)
+-        }
+-    }
+-}
+-
+-extension Duration {
+-    nonisolated var timeInterval: TimeInterval {
+-        let (seconds, attoseconds) = components
+-        return Double(seconds) + Double(attoseconds) / 1e18
+-    }
+-}
+diff --git a/voxim/UI/ASRDebugView.swift b/voxim/UI/ASRDebugView.swift
+deleted file mode 100644
+index 1edcb5f..0000000
+--- a/voxim/UI/ASRDebugView.swift
++++ /dev/null
+@@ -1,65 +0,0 @@
+-//
+-//  ASRDebugView.swift
+-//  voxim
+-//
+-
+-import SwiftUI
+-
+-struct ASRDebugView: View {
+-    @Bindable var model: ASRDebugModel
+-
+-    var body: some View {
+-        VStack(alignment: .leading, spacing: 12) {
+-            HStack {
+-                Text("voxim").font(.headline)
+-                Spacer()
+-                Text(model.transcriber.name).font(.caption).foregroundStyle(.secondary)
+-            }
+-
+-            status
+-
+-            Button(action: model.toggleRecording) {
+-                Label(
+-                    model.phase == .recording ? "Stop & Transcribe" : "Start Test Recording",
+-                    systemImage: model.phase == .recording ? "stop.circle.fill" : "mic.circle"
+-                )
+-                .frame(maxWidth: .infinity)
+-            }
+-            .controlSize(.large)
+-            .keyboardShortcut(.defaultAction)
+-            .disabled(model.phase == .preparing || model.phase == .transcribing)
+-
+-            if !model.transcript.isEmpty {
+-                Text(model.transcript)
+-                    .textSelection(.enabled)
+-                    .frame(maxWidth: .infinity, alignment: .leading)
+-                    .padding(8)
+-                    .background(.quaternary, in: RoundedRectangle(cornerRadius: 6))
+-                Text(String(format: "Audio %.1fs · stop→text %.0f ms", model.clipDuration, model.latency * 1000))
+-                    .font(.caption.monospacedDigit())
+-                    .foregroundStyle(.secondary)
+-            }
+-
+-            Divider()
+-            Button("Quit voxim") { NSApplication.shared.terminate(nil) }
+-                .buttonStyle(.link)
+-        }
+-        .padding(14)
+-        .frame(width: 320)
+-    }
+-
+-    @ViewBuilder private var status: some View {
+-        switch model.phase {
+-        case .preparing:
+-            Label("Preparing on-device model…", systemImage: "hourglass")
+-        case .idle:
+-            Label("Ready", systemImage: "checkmark.circle").foregroundStyle(.green)
+-        case .recording:
+-            Label("Recording", systemImage: "record.circle.fill").foregroundStyle(.red)
+-        case .transcribing:
+-            Label("Transcribing…", systemImage: "waveform")
+-        case .failed(let message):
+-            Label(message, systemImage: "exclamationmark.triangle.fill").foregroundStyle(.orange)
+-        }
+-    }
+-}
+diff --git a/voxim/UI/MenuView.swift b/voxim/UI/MenuView.swift
+new file mode 100644
+index 0000000..12a0d03
+--- /dev/null
++++ b/voxim/UI/MenuView.swift
+@@ -0,0 +1,100 @@
++//
++//  MenuView.swift
++//  voxim
++//
++
++import KeyboardShortcuts
++import SwiftUI
++
++struct MenuView: View {
++    @Bindable var controller: AppController
++
++    var body: some View {
++        VStack(alignment: .leading, spacing: 12) {
++            HStack {
++                Text("voxim").font(.headline)
++                Spacer()
++                Text(controller.activeEngine).font(.caption).foregroundStyle(.secondary)
++            }
++            status
++
++            Divider()
++            targetSection
++
++            Divider()
++            HStack {
++                Text("Agent push-to-talk")
++                Spacer()
++                KeyboardShortcuts.Recorder(for: .agentPushToTalk)
++            }
++
++            Divider()
++            Button("Quit voxim") { NSApplication.shared.terminate(nil) }
++                .buttonStyle(.link)
++        }
++        .padding(14)
++        .frame(width: 340)
++        .task { await controller.targets.refresh() }
++    }
++
++    @ViewBuilder private var status: some View {
++        switch controller.phase {
++        case .idle:
++            Label("Ready", systemImage: "checkmark.circle").foregroundStyle(.green)
++        case .recording:
++            Label("Recording", systemImage: "record.circle.fill").foregroundStyle(.red)
++        case .transcribing:
++            Label("Transcribing…", systemImage: "waveform")
++        case .pending:
++            Label("Waiting for confirmation", systemImage: "text.cursor")
++        case .sending:
++            Label("Sending…", systemImage: "paperplane")
++        case .sent(let label):
++            Label("Injected into \(label)", systemImage: "paperplane.fill").foregroundStyle(.green)
++        case .failed(let message):
++            Label(message, systemImage: "exclamationmark.triangle.fill").foregroundStyle(.orange)
++        }
++    }
++
++    @ViewBuilder private var targetSection: some View {
++        let targets = controller.targets
++        HStack {
++            Text("Claude Code target").font(.subheadline.weight(.semibold))
++            Spacer()
++            Button {
++                Task { await targets.refresh() }
++            } label: {
++                Image(systemName: "arrow.clockwise")
++            }
++            .buttonStyle(.borderless)
++            .help("Refresh tmux panes")
++        }
++
++        if let error = targets.listError {
++            Label(error, systemImage: "exclamationmark.triangle").font(.caption).foregroundStyle(.orange)
++        } else if targets.agentPanes.isEmpty {
++            Text("No tmux pane is running Claude Code.").font(.caption).foregroundStyle(.secondary)
++        }
++
++        ForEach(targets.agentPanes) { pane in
++            Button {
++                targets.select(pane)
++            } label: {
++                HStack {
++                    Image(systemName: targets.target?.paneID == pane.id ? "largecircle.fill.circle" : "circle")
++                    Text(pane.label).lineLimit(1).truncationMode(.middle)
++                    Spacer()
++                    Text(pane.id).font(.caption.monospaced()).foregroundStyle(.tertiary)
++                }
++                .contentShape(Rectangle())
++            }
++            .buttonStyle(.plain)
++        }
++
++        if targets.isTargetStale, let target = targets.target {
++            Label("\(target.label) is gone. Choose another pane.", systemImage: "exclamationmark.triangle")
++                .font(.caption)
++                .foregroundStyle(.orange)
++        }
++    }
++}
+diff --git a/voxim/UI/PendingPanel.swift b/voxim/UI/PendingPanel.swift
+new file mode 100644
+index 0000000..0ab70a6
+--- /dev/null
++++ b/voxim/UI/PendingPanel.swift
+@@ -0,0 +1,124 @@
++//
++//  PendingPanel.swift
++//  voxim
++//
++//  Floating, non-activating panel: shows recording state and the editable pending command.
++//  It can take keyboard focus for editing without activating voxim, so the terminal stays frontmost.
++//
++
++import AppKit
++import SwiftUI
++
++final class PendingPanel: NSPanel {
++    init(controller: AppController) {
++        super.init(
++            contentRect: NSRect(x: 0, y: 0, width: 560, height: 160),
++            styleMask: [.nonactivatingPanel, .titled, .fullSizeContentView],
++            backing: .buffered,
++            defer: true
++        )
++        isFloatingPanel = true
++        level = .floating
++        titleVisibility = .hidden
++        titlebarAppearsTransparent = true
++        isMovableByWindowBackground = true
++        hidesOnDeactivate = false
++        collectionBehavior = [.canJoinAllSpaces, .fullScreenAuxiliary]
++        standardWindowButton(.closeButton)?.isHidden = true
++        standardWindowButton(.miniaturizeButton)?.isHidden = true
++        standardWindowButton(.zoomButton)?.isHidden = true
++
++        let hosting = NSHostingView(rootView: PendingView(controller: controller))
++        hosting.sizingOptions = [.preferredContentSize]
++        contentView = hosting
++    }
++
++    override var canBecomeKey: Bool { true }
++
++    func show(focus: Bool) {
++        if !isVisible, let screen = NSScreen.main {
++            let frame = screen.visibleFrame
++            setFrameTopLeftPoint(NSPoint(x: frame.midX - self.frame.width / 2, y: frame.maxY - 80))
++        }
++        if focus { makeKeyAndOrderFront(nil) } else { orderFrontRegardless() }
++    }
++}
++
++struct PendingView: View {
++    @Bindable var controller: AppController
++    @FocusState private var editorFocused: Bool
++
++    var body: some View {
++        VStack(alignment: .leading, spacing: 10) {
++            header
++            switch controller.phase {
++            case .recording:
++                Label("Listening… release to finish", systemImage: "mic.fill")
++                    .foregroundStyle(.red)
++                    .font(.title3)
++            case .transcribing:
++                Label("Transcribing…", systemImage: "waveform")
++                    .font(.title3)
++            case .pending, .sending, .failed:
++                editor
++            case .idle, .sent:
++                EmptyView()
++            }
++        }
++        .padding(16)
++        .frame(width: 560, alignment: .leading)
++        .onChange(of: controller.phase) { _, phase in
++            if phase == .pending { editorFocused = true }
++        }
++    }
++
++    private var header: some View {
++        HStack(spacing: 6) {
++            Image(systemName: "terminal")
++            Text(controller.pendingTarget?.label ?? "No target")
++                .lineLimit(1)
++                .truncationMode(.middle)
++            Spacer()
++            Text(controller.activeEngine)
++                .foregroundStyle(.tertiary)
++        }
++        .font(.caption)
++        .foregroundStyle(.secondary)
++    }
++
++    @ViewBuilder private var editor: some View {
++        TextField("Command for Claude Code", text: $controller.pendingText, axis: .vertical)
++            .textFieldStyle(.plain)
++            .font(.title3)
++            .lineLimit(1...6)
++            .focused($editorFocused)
++            .onSubmit(controller.confirmSend)
++            .disabled(controller.phase == .sending)
++
++        if case .failed(let message) = controller.phase {
++            Label(message, systemImage: "exclamationmark.triangle.fill")
++                .font(.callout)
++                .foregroundStyle(.orange)
++            if let selected = controller.targets.target, selected.paneID != controller.pendingTarget?.paneID {
++                Button("Send to \(selected.label) instead", action: controller.retarget)
++                    .buttonStyle(.link)
++            }
++        }
++
++        HStack {
++            Text("⏎ send · ⌥⏎ new line · esc cancel")
++                .font(.caption)
++                .foregroundStyle(.tertiary)
++            Spacer()
++            Button("Copy") {
++                NSPasteboard.general.clearContents()
++                NSPasteboard.general.setString(controller.pendingText, forType: .string)
++            }
++            Button("Cancel", role: .cancel, action: controller.cancel)
++                .keyboardShortcut(.cancelAction)
++            Button(controller.phase == .sending ? "Sending…" : "Send", action: controller.confirmSend)
++                .keyboardShortcut(.defaultAction)
++                .disabled(controller.pendingText.trimmed.isEmpty || controller.phase == .sending)
++        }
++    }
++}
+diff --git a/voximTests/TmuxAdapterTests.swift b/voximTests/TmuxAdapterTests.swift
+new file mode 100644
+index 0000000..49b16ad
+--- /dev/null
++++ b/voximTests/TmuxAdapterTests.swift
+@@ -0,0 +1,149 @@
++//
++//  TmuxAdapterTests.swift
++//  voximTests
++//
++
++import Foundation
++import Testing
++@testable import voxim
++
++/// Scripted stand-in for tmux/ps. Records every call; never touches a real tmux server.
++final class FakeRunner: ProcessRunning, @unchecked Sendable {
++    struct Call: Equatable {
++        var tool: String
++        var arguments: [String]
++        var stdin: String?
++    }
++
++    private let lock = NSLock()
++    private var _calls: [Call] = []
++    var calls: [Call] { lock.withLock { _calls } }
++
++    var panes = [
++        "%6|~|0:2.0|~|/dev/ttys008|~|✳ Plan to implement",
++        "%10|~|0:5.0|~|/dev/ttys011|~|Mac |~| title with delimiter",
++    ]
++    var ps = """
++    ttys008  S+   claude
++    ttys011  Ss+  -zsh
++    ttys004  S    claude
++    ??       S    /Applications/Claude Code/claude
++    """
++    var failing: Set<String> = []
++
++    func run(_ executable: URL, _ arguments: [String], stdin: Data?) async throws -> ProcessResult {
++        let tool = executable.lastPathComponent
++        lock.withLock {
++            _calls.append(Call(tool: tool, arguments: arguments, stdin: stdin.map { String(decoding: $0, as: UTF8.self) }))
++        }
++        if tool == "ps" { return ProcessResult(status: 0, stdout: ps, stderr: "") }
++        guard tool == "tmux", arguments.first == "-u" else {
++            return ProcessResult(status: 1, stdout: "", stderr: "expected tmux -u")
++        }
++        let tmuxArguments = Array(arguments.dropFirst())
++        let subcommand = tmuxArguments.first ?? ""
++        if failing.contains(subcommand) { return ProcessResult(status: 1, stdout: "", stderr: "\(subcommand) failed") }
++        switch subcommand {
++        case "list-panes":
++            return ProcessResult(status: 0, stdout: panes.joined(separator: "\n") + "\n", stderr: "")
++        case "display-message":
++            let id = tmuxArguments[tmuxArguments.firstIndex(of: "-t")! + 1]
++            guard let line = panes.first(where: { $0.hasPrefix(id + TmuxAdapter.fieldDelimiter) }) else {
++                return ProcessResult(status: 1, stdout: "", stderr: "can't find pane: \(id)")
++            }
++            return ProcessResult(status: 0, stdout: line + "\n", stderr: "")
++        default:
++            return ProcessResult(status: 0, stdout: "", stderr: "")
++        }
++    }
++
++    var tmuxSubcommands: [String] { calls.filter { $0.tool == "tmux" }.map { $0.arguments[1] } }
++}
++
++struct TmuxAdapterTests {
++    let runner = FakeRunner()
++    var adapter: TmuxAdapter { TmuxAdapter(runner: runner, tmuxPath: URL(fileURLWithPath: "/usr/bin/tmux")) }
++    let claudePane = AgentTarget(paneID: "%6", label: "0:2.0 · Plan to implement")
++
++    @Test func listsPanesAndMarksForegroundClaudeAsAgent() async throws {
++        let panes = try await adapter.listPanes()
++        #expect(panes.map(\.id) == ["%6", "%10"])
++        #expect(panes.map(\.isAgent) == [true, false])
++        #expect(panes[0].label == "0:2.0 · Plan to implement")
++        #expect(panes[1].tty == "ttys011")
++        #expect(panes[1].title == "Mac |~| title with delimiter")
++    }
++
++    @Test func backgroundedClaudeIsNotAnAgent() {
++        // ttys004 runs claude without '+' (not foreground); '??' has no tty.
++        #expect(TmuxAdapter.parseAgentTTYs(runner.ps) == ["ttys008"])
++    }
++
++    @Test func submitPastesThenPressesEnter() async throws {
++        let receipt = try await adapter.submit("  Run the unit tests and fix the failures \n", to: claudePane)
++
++        #expect(receipt.boundary == .injectedIntoTerminal)
++        #expect(receipt.target == claudePane)
++        #expect(runner.tmuxSubcommands == ["display-message", "load-buffer", "paste-buffer", "send-keys"])
++
++        let calls = runner.calls.filter { $0.tool == "tmux" }
++        #expect(calls[1].stdin == "Run the unit tests and fix the failures")
++        #expect(calls[2].arguments.contains("-p"))
++        #expect(calls[2].arguments.suffix(2) == ["-t", "%6"])
++        #expect(calls[3].arguments == ["-u", "send-keys", "-t", "%6", "Enter"])
++    }
++
++    @Test func missingPaneFailsWithoutSendingAnything() async {
++        let gone = AgentTarget(paneID: "%99", label: "0:9.0 · old session")
++        await #expect(throws: AgentDeliveryError.targetGone("0:9.0 · old session")) {
++            try await adapter.submit("hello", to: gone)
++        }
++        #expect(runner.tmuxSubcommands == ["display-message"])
++    }
++
++    @Test func paneWithoutClaudeInForegroundIsRejected() async {
++        runner.ps = "ttys008  Ss+  -zsh\n"
++        await #expect(throws: AgentDeliveryError.notAnAgent(claudePane.label)) {
++            try await adapter.submit("hello", to: claudePane)
++        }
++        #expect(!runner.tmuxSubcommands.contains("send-keys"))
++    }
++
++    @Test func failedPasteNeverPressesEnter() async {
++        runner.failing = ["paste-buffer"]
++        await #expect(throws: AgentDeliveryError.commandFailed("paste-buffer failed")) {
++            try await adapter.submit("hello", to: claudePane)
++        }
++        #expect(runner.tmuxSubcommands == ["display-message", "load-buffer", "paste-buffer", "delete-buffer"])
++    }
++
++    @Test func emptyCommandIsRejectedBeforeTouchingTmux() async {
++        await #expect(throws: AgentDeliveryError.emptyCommand) {
++            try await adapter.submit(" \n\u{1B} ", to: claudePane)
++        }
++        #expect(runner.calls.isEmpty)
++    }
++
++    @Test func missingTmuxBinaryIsReported() async {
++        let adapter = TmuxAdapter(runner: runner, tmuxPath: nil)
++        await #expect(throws: AgentDeliveryError.tmuxNotFound) {
++            try await adapter.submit("hello", to: claudePane)
++        }
++    }
++
++    @Test func sanitizeStripsTerminalControlSequences() {
++        // An ESC could terminate bracketed paste early and smuggle keystrokes.
++        #expect(TmuxAdapter.sanitize("fix it\u{1B}[201~\r rm -rf") == "fix it[201~ rm -rf")
++        #expect(TmuxAdapter.sanitize("line one\nline two\ttab") == "line one\nline two\ttab")
++    }
++
++    @Test func noServerMeansNoPanes() async throws {
++        struct NoServer: ProcessRunning {
++            func run(_ executable: URL, _ arguments: [String], stdin: Data?) async throws -> ProcessResult {
++                ProcessResult(status: 1, stdout: "", stderr: "no server running on /private/tmp/tmux-501/default")
++            }
++        }
++        let adapter = TmuxAdapter(runner: NoServer(), tmuxPath: URL(fileURLWithPath: "/usr/bin/tmux"))
++        #expect(try await adapter.listPanes().isEmpty)
++    }
++}
+diff --git a/voximTests/TmuxIntegrationTests.swift b/voximTests/TmuxIntegrationTests.swift
+new file mode 100644
+index 0000000..13267f1
+--- /dev/null
++++ b/voximTests/TmuxIntegrationTests.swift
+@@ -0,0 +1,68 @@
++//
++//  TmuxIntegrationTests.swift
++//  voximTests
++//
++//  Opt-in: runs against the real tmux server in a throwaway session.
++//  TEST_RUNNER_VOXIM_TMUX_IT=1 xcodebuild test -only-testing:voximTests/TmuxIntegrationTests ...
++//
++
++import Foundation
++import Testing
++@testable import voxim
++
++@Suite(.enabled(if: ProcessInfo.processInfo.environment["VOXIM_TMUX_IT"] == "1"), .serialized)
++struct TmuxIntegrationTests {
++    let adapter = TmuxAdapter()
++    let runner = SystemProcessRunner()
++
++    /// Starts a detached session whose foreground process is a `cat` copy named `claude`,
++    /// so it passes agent validation and echoes whatever is delivered into `output`.
++    private func startFakeAgent() async throws -> (session: String, pane: String, output: URL) {
++        let dir = FileManager.default.temporaryDirectory.appendingPathComponent("voxim-it-\(UUID().uuidString)")
++        try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
++        let fakeClaude = dir.appendingPathComponent("claude")
++        try FileManager.default.copyItem(atPath: "/bin/cat", toPath: fakeClaude.path)
++        // A copied platform binary is SIGKILLed on launch unless re-signed.
++        let signed = try await runner.run(
++            URL(fileURLWithPath: "/usr/bin/codesign"), ["-f", "-s", "-", fakeClaude.path], stdin: nil
++        )
++        try #require(signed.status == 0, "codesign failed: \(signed.stderr)")
++        let output = dir.appendingPathComponent("out.txt")
++        let session = "voxim-it-\(Int.random(in: 1000...9999))"
++
++        let tmux = try #require(adapter.tmuxPath)
++        let created = try await runner.run(
++            tmux,
++            ["new-session", "-d", "-s", session, "-P", "-F", "#{pane_id}", "exec '\(fakeClaude.path)' > '\(output.path)'"],
++            stdin: nil
++        )
++        try #require(created.status == 0, "new-session failed: \(created.stderr)")
++        try await Task.sleep(for: .milliseconds(300))
++        return (session, created.stdout.trimmed, output)
++    }
++
++    private func kill(_ session: String) async {
++        guard let tmux = adapter.tmuxPath else { return }
++        _ = try? await runner.run(tmux, ["kill-session", "-t", session], stdin: nil)
++    }
++
++    @Test func deliversToBoundPaneThenRefusesOnceItIsGone() async throws {
++        let (session, paneID, output) = try await startFakeAgent()
++        defer { Task { await kill(session) } }
++
++        let panes = try await adapter.listPanes()
++        let pane = try #require(panes.first { $0.id == paneID }, "pane \(paneID) not in \(panes.map { "\($0.id) \($0.location) agent=\($0.isAgent)" })")
++        #expect(pane.isAgent)
++
++        let receipt = try await adapter.submit("Run the unit tests and fix the failures", to: pane.target)
++        #expect(receipt.boundary == .injectedIntoTerminal)
++        try await Task.sleep(for: .milliseconds(300))
++        #expect(try String(contentsOf: output, encoding: .utf8) == "Run the unit tests and fix the failures\n")
++
++        await kill(session)
++        try await Task.sleep(for: .milliseconds(200))
++        await #expect(throws: AgentDeliveryError.targetGone(pane.target.label)) {
++            try await adapter.submit("this must not be delivered anywhere", to: pane.target)
++        }
++    }
++}
+diff --git a/voximTests/voximTests.swift b/voximTests/voximTests.swift
+deleted file mode 100644
+index 353a321..0000000
+--- a/voximTests/voximTests.swift
++++ /dev/null
+@@ -1,17 +0,0 @@
+-//
+-//  voximTests.swift
+-//  voximTests
+-//
+-//  Created by Lei Wang on 10/12/26.
+-//
+-
+-import Testing
+-@testable import voxim
+-
+-struct voximTests {
+-
+-    @Test func example() async throws {
+-        // Write your test here and use APIs like `#expect(...)` to check expected conditions.
+-    }
+-
+-}

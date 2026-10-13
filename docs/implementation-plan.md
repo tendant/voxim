@@ -1,60 +1,56 @@
 # voxim — Implementation Plan
 
-Implements [voice-coding-agent-mvp-design.md](../voice-coding-agent-mvp-design.md). **Date:** 2026-10-12
+**Date:** 2026-10-12 · Started from [voice-coding-agent-mvp-design.md](../voice-coding-agent-mvp-design.md); **re-scoped the same day to a generic voice input tool.**
+
+## Scope
+
+A local-first macOS menu-bar dictation tool: **hold fn**, speak, release, and the text is typed at the cursor of whatever app has focus (editor, browser, chat, terminal, …).
+
+- **In:** push-to-talk, local ASR, typing into the focused field, a copyable transcript when typing isn't possible, unmistakable recording state.
+- **Out (dropped in the re-scope):** agent mode, coding-agent/terminal targeting, tmux integration, confirm-before-send panel. The removed Day 2 agent/tmux code is preserved as `docs/archive/day2-agent-mode.patch`.
+- Still out per the design: cloud ASR, TTS, wake words, context harvesting, auto-pressing Return.
 
 ## Decisions
 
-- **Build, don't extend.** The repo is a fresh SwiftUI app targeting macOS 26; the Day 1 spike only compares ASR engines.
-- **ASR:** macOS 26 on-device `SpeechAnalyzer` / `SpeechTranscriber` first (OS-managed model via `AssetInventory`, nothing to bundle or license). Parakeet (FluidAudio CoreML) is benchmarked behind the same `Transcriber` protocol.
-- **Agent delivery:** Claude Code runs inside tmux, so `TmuxAdapter` is primary:
-  - Addressing: pane IDs (`%7`) are stable for the pane's lifetime and never reused within a tmux server run.
-  - Delivery: `tmux load-buffer -` → `paste-buffer -p -t %7` (bracketed paste; newlines don't submit early) → `send-keys -t %7 Enter`. Exit code 0 is the `injected_into_terminal` receipt.
-  - Validation before every send: `tmux display -p -t %7 '#{pane_current_command}'` — pane exists and runs `claude`/`node`.
-- **Fallback:** `GhosttyAXAdapter` binds a specific window (pid + AX window), revalidates, raises, pastes, presses Enter. Best-effort; receipt is only `injected_into_terminal`.
-- **App sandbox off** (AX insertion, synthetic keystrokes and spawning `tmux` are blocked under sandbox). Hardened runtime stays on.
+- **ASR:** Parakeet TDT v2 (FluidAudio, Apache-2.0) is the default; Apple `SpeechTranscriber` is the zero-download fallback while Parakeet loads or if it fails. See `docs/asr-spike.md`.
+- **Insertion:** clipboard + synthetic ⌘V, the one method that works across native, browser, Electron and terminal inputs. The previous clipboard is snapshotted and restored, unless something else wrote to it meanwhile. Dictated entries are marked `org.nspasteboard.TransientType` so clipboard managers skip them.
+- **Safety:** never presses Return. Refuses to type if focus moved to another app while speaking, if no element has focus, or if secure input (password fields) is active. In those cases it shows the transcript with Copy.
+- **Permissions:** Microphone (record) and Accessibility (post ⌘V, read focus). Each missing permission is explained, with no silent fallback.
+- **Shortcut: hold fn, fixed.** Holding fn alone for 300 ms starts recording; releasing fn stops it. fn used as a modifier (fn+arrow, fn+F-key, fn+E) or together with ⌘⌃⌥⇧ never starts recording, and no events are swallowed. Carbon hotkeys can't express fn, so a session `CGEventTap` observes key events; it needs Accessibility, so voxim asks at launch and retries until granted. Decision logic lives in `FnHoldDetector` (unit-tested).
+- **🌐 key conflict:** System Settings › Keyboard › "Press 🌐 key to" fires on fn release. On this Mac it's set to Start Dictation; the menu warns until it's set to Do Nothing.
+- **App sandbox off**, hardened runtime on. Signed with team `WJTDTA46K5` so the Accessibility grant survives rebuilds.
 
-## Project setup
-
-- `ENABLE_APP_SANDBOX = NO`; `ENABLE_RESOURCE_ACCESS_AUDIO_INPUT = YES` (audio-input entitlement under hardened runtime).
-- Info.plist: `LSUIElement = YES`, `NSMicrophoneUsageDescription`, `NSSpeechRecognitionUsageDescription`.
-- `MenuBarExtra` + `Settings` scene instead of `WindowGroup`.
-- SPM: `sindresorhus/KeyboardShortcuts` (key-down/key-up for push-to-talk, recorder UI, no Accessibility needed).
-- Keep signing with team `WJTDTA46K5` so the Accessibility grant survives rebuilds.
-
-## Code layout (`voxim/`, synchronized groups)
+## Code layout (`voxim/`)
 
 ```
-App/        voximApp, AppController (idle→recording→transcribing→pending→sending→sent|error)
-Input/      ShortcutManager, AudioCapture (AVAudioEngine tap → 16 kHz mono Float32, memory only)
-ASR/        Transcriber protocol, AppleSpeechTranscriber, (spike) ParakeetTranscriber
-Dictation/  DictationSink protocol, AXInsertSink (kAXSelectedTextAttribute), PasteSink (clipboard save/restore + ⌘V)
-Agent/      AgentTarget, AgentAdapter protocol, TmuxAdapter, GhosttyAXAdapter, TargetManager, DeliveryReceipt
-UI/         MenuBarView, PendingPanel (NSPanel: editable text, target label, ⏎ send / esc cancel), StatusHUD, SettingsView
-Support/    Permissions (mic + AXIsProcessTrusted), Metrics (counters + latency samples → JSON in App Support), Log (os.Logger, privacy: .private)
+App/        voximApp (MenuBarExtra + HUD wiring), AppController (idle→recording→transcribing→inserted|failed)
+Input/      ShortcutManager (fn event tap, 🌐 setting check), FnHoldDetector, AudioCapture (16 kHz mono, memory only)
+ASR/        Transcriber, AppleSpeechTranscriber, ParakeetTranscriber, FallbackTranscriber
+Dictation/  DictationSink, PasteInserter (clipboard snapshot/restore + ⌘V), AXAccess, FocusedApp
+UI/         MenuView (status, shortcut hint, permission prompt), StatusHUD (non-activating, never key)
+Support/    Log (no transcript contents), Duration helpers
 ```
 
 ## Phases
 
-| Days | Deliverable | Acceptance |
+| Step | Deliverable | Acceptance |
 |---|---|---|
-| 1 ✅ | Project settings; `AudioCapture` + `AppleSpeechTranscriber` behind a debug menu item; ASR spike Apple vs Parakeet on coding phrases | Local ASR works; numbers in `docs/asr-spike.md` → Parakeet TDT v2 default, Apple fallback |
-| 2 | Hold ⌥⇧Space → record → transcribe → `PendingPanel` → `TmuxAdapter` to a chosen pane | "Run the unit tests and fix the failures" lands in Claude Code, submits only after ⏎ |
-| 3–4 | Dictation (⌥Space): AX insert → paste fallback → copyable transcript on failure | Works in Ghostty, VS Code, Safari field; never presses Enter |
-| 5 | Menu bar state icon (unmistakable while recording), permission onboarding, tmux pane picker | Denied mic/AX explains itself; no silent fallback |
-| 6–7 | Pending panel edit/cancel/retry; empty transcript blocks send; auto-send pref default off | No path submits without confirmation |
-| 8–9 | `TargetManager` revalidation before every send; receipts distinguish `injected_into_terminal` vs unknown acceptance; Ghostty fallback adapter | Kill pane mid-flow → error + text retained, never misrouted |
-| 10 | (cuttable) "Include selection" button captures AX selected text on click only | Nothing captured implicitly |
-| 11–14 | Metrics view (counts, p50/p95, edit rate, failures), dogfooding, usability report | Go/no-go per design gates |
-
-Scope cut order follows the design; targeting and explicit confirmation are never cut.
+| 1 ✅ | Project setup, audio capture, ASR spike | Local ASR works; Parakeet v2 chosen |
+| 2 🟡 | Hold fn → transcribe → paste at cursor; HUD; permission handling; clipboard restore | Works in VS Code, Safari/Chrome text field, Notes, Slack, Ghostty; clipboard unchanged afterwards; never presses Return |
+| 3 | Esc cancels while recording; first-run onboarding for both permissions; model-download progress in menu | No dead ends on a fresh install |
+| 4 | Text cleanup options: auto-capitalize/trailing punctuation off for terminals, leading space when appending mid-sentence | Inserted text reads naturally in prose and in shells |
+| 5 | Custom vocabulary / replacements (e.g. "tmux", project names) | Spike phrases misrecognized on Day 1 come out right |
+| 6 | Local metrics (counts, p50/p95 latency, failures by reason — never text), dogfooding | Daily-use report and go/no-go |
 
 ## Testing
 
-- Unit: state-machine transitions (cancel/error at every stage), `TmuxAdapter` with a fake process runner (stale pane, non-claude command, non-zero exit), clipboard restore, metrics never store transcript text.
-- Manual: each of the eight failure rows in design §7 reproduced once before dogfooding.
+- Unit: `FnHoldDetector` (hold vs tap, fn as modifier, other modifiers, keys while recording, tap reset).
+- Unit: `PasteInserter` with a private pasteboard and fake ⌘V poster (restore, transient marker, empty clipboard, clipboard changed meanwhile, secure input refused).
+- Manual matrix: target apps × {normal, focus switched mid-speech, password field, no focused field, Accessibility revoked, mic denied}.
 
 ## Known risks
 
-- Text already typed in Claude Code's input gets appended to; v1 warns rather than detects.
-- AX insertion into Ghostty likely fails → terminal dictation uses paste; measure it.
-- `SpeechTranscriber` may mangle code identifiers; the Day 1 spike decides whether Parakeet is needed.
+- A few apps ignore synthetic ⌘V or read the clipboard late; the 250 ms restore delay may need tuning per app.
+- Restoring the clipboard is best-effort: exotic promised/lazy pasteboard types may not round-trip.
+- The paste is posted with explicit ⌘-only flags so modifiers the user happens to hold don't alter it; check apps with custom key handling.
+- Recording starts 300 ms after fn goes down, so speech in that window is lost; the HUD appearing is the cue to talk. Tune after dogfooding.

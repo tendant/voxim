@@ -9,14 +9,44 @@ import SwiftUI
 
 @main
 struct voximApp: App {
-    @State private var debugModel = ASRDebugModel()
+    @State private var controller: AppController
+    private let hud: StatusHUD
+    private let shortcuts: ShortcutManager
+
+    init() {
+        let controller = AppController()
+        let hud = StatusHUD(controller: controller)
+        controller.onHUDVisibilityChange = { [weak hud] visible in
+            if visible { hud?.show() } else { hud?.orderOut(nil) }
+        }
+        let shortcuts = ShortcutManager(onPress: controller.keyDown, onRelease: controller.keyUp)
+        // fn+Space needs an event tap, which needs Accessibility; ask up front, then
+        // ShortcutManager keeps retrying until access is granted.
+        // Unit tests host inside this app; don't prompt or intercept keys there.
+        let isTestHost = ProcessInfo.processInfo.environment["XCTestConfigurationFilePath"] != nil
+        if !isTestHost {
+            if !AXAccess.isTrusted { AXAccess.requestTrust() }
+            shortcuts.start()
+        }
+        _controller = State(initialValue: controller)
+        self.hud = hud
+        self.shortcuts = shortcuts
+    }
 
     var body: some Scene {
         MenuBarExtra {
-            ASRDebugView(model: debugModel)
+            MenuView(controller: controller)
         } label: {
-            Image(systemName: debugModel.phase == .recording ? "mic.fill" : "mic")
+            Image(systemName: menuBarSymbol)
         }
         .menuBarExtraStyle(.window)
+    }
+
+    private var menuBarSymbol: String {
+        switch controller.phase {
+        case .recording: "mic.fill"
+        case .failed: "mic.badge.xmark"
+        default: "mic"
+        }
     }
 }

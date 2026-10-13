@@ -6,6 +6,10 @@
 	objectVersion = 77;
 	objects = {
 
+/* Begin PBXBuildFile section */
+		AB5E00B0307D18AF00126E9D /* FluidAudio in Frameworks */ = {isa = PBXBuildFile; productRef = AB5E00B1307D18AF00126E9D /* FluidAudio */; };
+/* End PBXBuildFile section */
+
 /* Begin PBXContainerItemProxy section */
 		AB5E0088307D18AF00126E9D /* PBXContainerItemProxy */ = {
 			isa = PBXContainerItemProxy;
@@ -52,6 +56,7 @@
 			isa = PBXFrameworksBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
+				AB5E00B0307D18AF00126E9D /* FluidAudio in Frameworks */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -112,6 +117,7 @@
 			);
 			name = voxim;
 			packageProductDependencies = (
+				AB5E00B1307D18AF00126E9D /* FluidAudio */,
 			);
 			productName = voxim;
 			productReference = AB5E007A307D18AF00126E9D /* voxim.app */;
@@ -195,6 +201,9 @@
 			);
 			mainGroup = AB5E0071307D18AF00126E9D;
 			minimizedProjectReferenceProxies = 1;
+			packageReferences = (
+				AB5E00B2307D18AF00126E9D /* XCRemoteSwiftPackageReference "FluidAudio" */,
+			);
 			preferredProjectObjectVersion = 77;
 			productRefGroup = AB5E007B307D18AF00126E9D /* Products */;
 			projectDirPath = "";
@@ -579,6 +588,25 @@
 			defaultConfigurationName = Release;
 		};
 /* End XCConfigurationList section */
+
+/* Begin XCRemoteSwiftPackageReference section */
+		AB5E00B2307D18AF00126E9D /* XCRemoteSwiftPackageReference "FluidAudio" */ = {
+			isa = XCRemoteSwiftPackageReference;
+			repositoryURL = "https://github.com/FluidInference/FluidAudio.git";
+			requirement = {
+				kind = upToNextMinorVersion;
+				minimumVersion = 0.17.7;
+			};
+		};
+/* End XCRemoteSwiftPackageReference section */
+
+/* Begin XCSwiftPackageProductDependency section */
+		AB5E00B1307D18AF00126E9D /* FluidAudio */ = {
+			isa = XCSwiftPackageProductDependency;
+			package = AB5E00B2307D18AF00126E9D /* XCRemoteSwiftPackageReference "FluidAudio" */;
+			productName = FluidAudio;
+		};
+/* End XCSwiftPackageProductDependency section */
 	};
 	rootObject = AB5E0072307D18AF00126E9D /* Project object */;
 }
