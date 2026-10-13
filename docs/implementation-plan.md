@@ -42,6 +42,13 @@ Support/    Log (no transcript contents), Metrics (events, summary, JSONL store)
 | 5 🟡 | Vocabulary as "when I say → type" replacement rules (Settings window; whole-word, case-insensitive, flexible spacing/hyphens, longest phrase first), applied before smart formatting. Acoustic biasing (FluidAudio CTC boosting, +~100 MB model) deferred | Day 1 misrecognitions (MUX→tmux, within PM→with npm) fixed by rules; homophones (pain/pane) out of reach |
 | 6 🟡 | Local metrics: one text-free event per push-to-talk (outcome, failure reason, engine, audio length, release→transcript and transcript→⌘V timings, word count) in `~/Library/Application Support/voxim/metrics.jsonl`, 90-day retention; menu "today" line; Settings › Usage tab (period, p50/p95, failures by reason, reset, reveal file). Then dogfooding | Daily-use report and go/no-go |
 
+### Installable build
+
+- `scripts/install.sh`: Release build signed with the Developer ID Application identity (team `WJTDTA46K5`), checks (Developer ID authority, hardened runtime, microphone entitlement present, no `get-task-allow`), quits a running copy, installs to `/Applications`, launches. Build number = git commit count.
+- Entitlements come from `voxim.entitlements` (microphone only). `CODE_SIGN_INJECT_BASE_ENTITLEMENTS=NO` for the release build: plain `xcodebuild build` otherwise injects `get-task-allow` even in Release, and disabling injection also drops setting-generated entitlements — hence the explicit file.
+- Launch at login via `SMAppService.mainApp` (menu toggle, only offered for the `/Applications` copy). Newest launched instance asks older ones to quit, so the installed copy and an Xcode run never both type.
+- Not notarized: unnecessary for a locally built app (no quarantine). Needed before sharing a download with other people.
+
 ## Testing
 
 - Unit: `FnHoldDetector` (hold vs tap, fn as modifier, other modifiers, keys while recording, Esc cancel, tap reset); `ModelStatus` (late progress can't override ready).

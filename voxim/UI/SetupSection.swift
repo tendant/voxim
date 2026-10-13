@@ -39,7 +39,7 @@ struct SetupSection: View {
             row("Microphone", ok: true)
         case .denied:
             row("Microphone", ok: false, detail: "Denied") {
-                Button("Open Settings", action: MicAccess.openSettings)
+                Button("Open Settings") { MicAccess.openSettings() }
             }
         default:
             row("Microphone", ok: false, detail: "Not yet allowed") {
@@ -53,7 +53,7 @@ struct SetupSection: View {
             row("Accessibility", ok: true)
         } else {
             row("Accessibility", ok: false, detail: "Needed for fn and typing") {
-                Button("Open Settings", action: AXAccess.openSettings)
+                Button("Open Settings") { AXAccess.openSettings() }
             }
         }
     }

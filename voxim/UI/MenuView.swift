@@ -9,6 +9,7 @@ struct MenuView: View {
     @Bindable var controller: AppController
     @AppStorage(AppController.smartFormattingKey) private var smartFormatting = true
     @Environment(\.openSettings) private var openSettings
+    @State private var launchAtLoginEnabled = false
 
     var body: some View {
         VStack(alignment: .leading, spacing: 12) {
@@ -68,11 +69,37 @@ struct MenuView: View {
             }
 
             Divider()
+            launchAtLogin
             Button("Quit voxim") { NSApplication.shared.terminate(nil) }
                 .buttonStyle(.link)
         }
         .padding(14)
         .frame(width: 320)
+    }
+
+    @ViewBuilder private var launchAtLogin: some View {
+        if LoginItem.isInstalledCopy {
+            Toggle("Launch at login", isOn: Binding(
+                get: { launchAtLoginEnabled },
+                set: { enabled in
+                    LoginItem.setEnabled(enabled)
+                    launchAtLoginEnabled = LoginItem.isEnabled
+                }
+            ))
+            .toggleStyle(.switch)
+            .controlSize(.small)
+            .onAppear { launchAtLoginEnabled = LoginItem.isEnabled }
+            if LoginItem.needsApproval {
+                Button("Allow in Login Items settings…") { LoginItem.openSettings() }
+                    .buttonStyle(.link)
+                    .font(.caption)
+            }
+        } else {
+            Text("Launch at login is available once voxim is installed in /Applications (scripts/install.sh).")
+                .font(.caption)
+                .foregroundStyle(.secondary)
+                .fixedSize(horizontal: false, vertical: true)
+        }
     }
 
     private var todaySummary: String {

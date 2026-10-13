@@ -27,6 +27,7 @@ struct voximApp: App {
         // Unit tests host inside this app; don't prompt or intercept keys there.
         let isTestHost = ProcessInfo.processInfo.environment["XCTestConfigurationFilePath"] != nil
         if !isTestHost {
+            SingleInstance.takeOver()
             if !AXAccess.isTrusted { AXAccess.requestTrust() }
             shortcuts.start()
         }

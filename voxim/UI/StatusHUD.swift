@@ -75,7 +75,7 @@ struct HUDView: View {
                 }
                 HStack {
                     if controller.phase == .failed(InsertionError.accessibilityDenied.localizedDescription) {
-                        Button("Open Settings", action: AXAccess.openSettings)
+                        Button("Open Settings") { AXAccess.openSettings() }
                     }
                     Spacer()
                     if !controller.undelivered.isEmpty {
