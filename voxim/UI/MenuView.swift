@@ -9,7 +9,6 @@ struct MenuView: View {
     @Bindable var controller: AppController
     @AppStorage(AppController.smartFormattingKey) private var smartFormatting = true
     @AppStorage(AppController.preRollKey) private var preRoll = true
-    @Environment(\.openSettings) private var openSettings
     @State private var launchAtLoginEnabled = false
 
     var body: some View {
@@ -67,11 +66,7 @@ struct MenuView: View {
             HStack {
                 Text(vocabularySummary).font(.callout)
                 Spacer()
-                Button("Vocabulary…") {
-                    // Menu-bar apps must activate first, or the window opens behind others.
-                    NSApplication.shared.activate()
-                    openSettings()
-                }
+                Button("Edit…") { SettingsWindow.shared.show(controller, tab: .vocabulary) }
             }
             if let action = GlobeKeySetting.conflictingAction {
                 Text("Your 🌐 key is set to “\(action)”, which also fires when you release fn. Set System Settings › Keyboard › “Press 🌐 key to” to Do Nothing.")
@@ -82,8 +77,16 @@ struct MenuView: View {
 
             Divider()
             launchAtLogin
-            Button("Quit voxim") { NSApplication.shared.terminate(nil) }
-                .buttonStyle(.link)
+            HStack {
+                Button {
+                    SettingsWindow.shared.show(controller)
+                } label: {
+                    Label("Settings…", systemImage: "gearshape")
+                }
+                Spacer()
+                Button("Quit voxim") { NSApplication.shared.terminate(nil) }
+            }
+            .buttonStyle(.link)
         }
         .padding(14)
         .frame(width: 320)

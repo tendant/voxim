@@ -76,7 +76,7 @@ With an Apple Developer ID certificate, `VOXIM_TEAM_ID=<your team> scripts/insta
 
 Open `voxim.xcodeproj` and run the `voxim` scheme. Debug builds are a separate app ("voxim Dev", `ai.weilabs.voxim.debug`) with their own permissions, and the most recently launched copy takes over fn. Run the unit tests with `xcodebuild -scheme voxim -only-testing:voximTests test`.
 
-Releases: `scripts/release.sh <version>` builds, notarizes and publishes a DMG (`--dry-run` stops before notarization).
+Releases: `scripts/release.sh <version>` builds, notarizes and publishes a DMG. Setup and steps: [`docs/releasing.md`](docs/releasing.md).
 
 Design notes and roadmap: [`docs/implementation-plan.md`](docs/implementation-plan.md).
 

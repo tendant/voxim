@@ -20,10 +20,21 @@ struct voximApp: App {
             if visible { hud?.show() } else { hud?.orderOut(nil) }
         }
         let shortcuts = ShortcutManager(onAction: controller.handle)
-        // fn+Space needs an event tap, which needs Accessibility; ask up front, then
+        // The fn shortcut needs an event tap, which needs Accessibility: ask up front, then
         // ShortcutManager keeps retrying until access is granted.
         // Unit tests host inside this app; don't prompt or intercept keys there.
         let isTestHost = ProcessInfo.processInfo.environment["XCTestConfigurationFilePath"] != nil
+        #if DEBUG
+        // `-voximSettingsPreview`: just open Settings, without taking over a running copy,
+        // prompting for permissions or listening for fn. Used to check the window by hand.
+        if CommandLine.arguments.contains("-voximSettingsPreview") {
+            DispatchQueue.main.async { SettingsWindow.shared.show(controller) }
+            _controller = State(initialValue: controller)
+            self.hud = hud
+            self.shortcuts = shortcuts
+            return
+        }
+        #endif
         if !isTestHost {
             SingleInstance.takeOver()
             if !AXAccess.isTrusted { AXAccess.requestTrust() }
@@ -41,17 +52,6 @@ struct voximApp: App {
             Image(systemName: menuBarSymbol)
         }
         .menuBarExtraStyle(.window)
-
-        Settings {
-            TabView {
-                Tab("Vocabulary", systemImage: "character.book.closed") {
-                    VocabularySettingsView(store: controller.replacements)
-                }
-                Tab("Usage", systemImage: "chart.bar") {
-                    UsageView(store: controller.metrics)
-                }
-            }
-        }
     }
 
     private var menuBarSymbol: String {
