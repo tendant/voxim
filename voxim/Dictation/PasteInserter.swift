@@ -52,7 +52,8 @@ final class PasteInserter: DictationSink {
         self.restoreDelay = restoreDelay
     }
 
-    func insert(_ text: String, expecting app: FocusedApp?) async throws {
+    @discardableResult
+    func insert(_ text: String, expecting app: FocusedApp?) async throws -> ContinuousClock.Instant {
         if checkFocus {
             guard AXAccess.isTrusted else { throw InsertionError.accessibilityDenied }
             if let app, let now = FocusedApp.current, now.pid != app.pid {
@@ -72,11 +73,12 @@ final class PasteInserter: DictationSink {
         let ourChange = pasteboard.changeCount
 
         poster.postPaste()
+        let pastedAt = ContinuousClock.now
         try? await Task.sleep(for: restoreDelay)
 
         // If something else wrote to the clipboard meanwhile, leave it alone.
-        guard pasteboard.changeCount == ourChange else { return }
-        restore(saved)
+        if pasteboard.changeCount == ourChange { restore(saved) }
+        return pastedAt
     }
 
     private func snapshot() -> [NSPasteboardItem] {

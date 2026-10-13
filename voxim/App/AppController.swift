@@ -31,6 +31,7 @@ final class AppController {
     private(set) var activeEngine = ""
     let modelStatus: ModelStatus
     let replacements = ReplacementStore()
+    let metrics: MetricsStore
 
     private let transcriber: FallbackTranscriber
     private let sink: any DictationSink
@@ -42,7 +43,8 @@ final class AppController {
     /// Called whenever the HUD should change visibility.
     var onHUDVisibilityChange: ((Bool) -> Void)?
 
-    init(sink: any DictationSink = PasteInserter()) {
+    init(sink: any DictationSink = PasteInserter(), metrics: MetricsStore = MetricsStore()) {
+        self.metrics = metrics
         let modelStatus = ModelStatus()
         let parakeet = ParakeetTranscriber { event in
             switch event {
@@ -88,12 +90,12 @@ final class AppController {
         }
         if !AXAccess.isTrusted {
             AXAccess.requestTrust()
-            fail(InsertionError.accessibilityDenied.localizedDescription)
+            fail(InsertionError.accessibilityDenied)
             return
         }
         Task {
             guard await AudioCapture.requestPermission() else {
-                fail(AudioCaptureError.microphoneDenied.localizedDescription)
+                fail(AudioCaptureError.microphoneDenied)
                 return
             }
             // Released while the permission check was pending: don't start a recording.
@@ -105,7 +107,7 @@ final class AppController {
                 undelivered = ""
                 setPhase(.recording)
             } catch {
-                fail(error.localizedDescription)
+                fail(error)
             }
         }
     }
@@ -117,18 +119,21 @@ final class AppController {
         let held = pressStarted.map { ContinuousClock.now - $0 } ?? .zero
         pressStarted = nil
         guard held >= Self.minimumHold else {
+            metrics.record(DictationEvent(date: .now, outcome: .tooShort, audioSeconds: clip.duration))
             setPhase(.idle)
             return
         }
         setPhase(.transcribing)
-        Task { await transcribeAndInsert(clip) }
+        let releasedAt = ContinuousClock.now
+        Task { await transcribeAndInsert(clip, releasedAt: releasedAt) }
     }
 
     /// Esc while recording: discard the audio without transcribing or typing anything.
     func cancelRecording() {
         guard phase == .recording else { return }
-        _ = capture.stop()
+        let clip = capture.stop()
         pressStarted = nil
+        metrics.record(DictationEvent(date: .now, outcome: .cancelled, audioSeconds: clip.duration))
         Log.app.info("recording cancelled")
         setPhase(.idle)
     }
@@ -140,36 +145,55 @@ final class AppController {
 
     // MARK: Pipeline
 
-    private func transcribeAndInsert(_ clip: AudioClip) async {
+    private func transcribeAndInsert(_ clip: AudioClip, releasedAt: ContinuousClock.Instant) async {
+        // Text-free metrics event, filled in as the pipeline progresses.
+        var event = DictationEvent(date: .now, outcome: .failed, audioSeconds: clip.duration)
         let text: String
         do {
-            let started = ContinuousClock.now
             text = try await transcriber.transcribe(clip)
-            let elapsedMS = (ContinuousClock.now - started).timeInterval * 1000
-            Log.asr.info("transcribed \(clip.duration, format: .fixed(precision: 1))s audio in \(elapsedMS, format: .fixed(precision: 0)) ms")
+            event.transcribeMS = (ContinuousClock.now - releasedAt).timeInterval * 1000
+            Log.asr.info("transcribed \(clip.duration, format: .fixed(precision: 1))s audio in \(event.transcribeMS ?? 0, format: .fixed(precision: 0)) ms")
             await refreshEngineName()
+            event.engine = activeEngine
         } catch {
+            event.reason = .recognitionFailed
+            metrics.record(event)
             fail(error.localizedDescription)
             return
         }
         guard !text.trimmed.isEmpty else {
-            fail("Nothing was recognized. Hold the shortcut and try again.")
+            event.reason = .nothingRecognized
+            metrics.record(event)
+            fail("Nothing was recognized. Hold fn and try again.")
             return
         }
+        let transcriptReady = ContinuousClock.now
 
         let corrected = replacements.apply(to: text)
         let formatted = UserDefaults.standard.object(forKey: Self.smartFormattingKey) as? Bool ?? true
             ? TextFormatter.format(corrected, context: FocusContext.current())
             : corrected.trimmed
 
+        event.words = formatted.split(whereSeparator: \.isWhitespace).count
         do {
-            try await sink.insert(formatted, expecting: focusAtStart)
+            let pastedAt = try await sink.insert(formatted, expecting: focusAtStart)
+            event.typeMS = (pastedAt - transcriptReady).timeInterval * 1000
+            event.outcome = .inserted
+            metrics.record(event)
             Log.app.info("inserted \(formatted.count) characters")
             setPhase(.inserted)
         } catch {
+            event.reason = .init(error)
+            metrics.record(event)
             undelivered = formatted.trimmed
             fail(error.localizedDescription)
         }
+    }
+
+    /// A failure before any audio was captured (permissions, no input device).
+    private func fail(_ error: any Error) {
+        metrics.record(DictationEvent(date: .now, outcome: .failed, reason: .init(error)))
+        fail(error.localizedDescription)
     }
 
     private func fail(_ message: String) {

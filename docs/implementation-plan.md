@@ -27,8 +27,8 @@ App/        voximApp (MenuBarExtra + HUD wiring), AppController (idle→recordin
 Input/      ShortcutManager (fn event tap, Esc cancel, 🌐 setting check), FnHoldDetector, AudioCapture (16 kHz mono, memory only)
 ASR/        Transcriber, AppleSpeechTranscriber, ParakeetTranscriber, FallbackTranscriber, ModelStatus
 Dictation/  DictationSink, PasteInserter (clipboard snapshot/restore + ⌘V), AXAccess, FocusedApp, FocusContext (chars before cursor, terminal detection), TextFormatter, Replacements (rules + store)
-UI/         MenuView (status, shortcut hint), SetupSection (mic / Accessibility / model checklist), VocabularySettingsView (Settings window), StatusHUD (non-activating, never key)
-Support/    Log (no transcript contents), Duration helpers
+UI/         MenuView (status, shortcut hint), SetupSection (mic / Accessibility / model checklist), VocabularySettingsView + UsageView (Settings tabs), StatusHUD (non-activating, never key)
+Support/    Log (no transcript contents), Metrics (events, summary, JSONL store), Duration helpers
 ```
 
 ## Phases
@@ -40,11 +40,12 @@ Support/    Log (no transcript contents), Duration helpers
 | 3 🟡 | Esc cancels while recording (swallowed only then); menu setup checklist for mic, Accessibility and speech model with fix-it buttons; Parakeet download/compile progress, Apple speech used meanwhile | No dead ends on a fresh install |
 | 4 🟡 | Smart formatting (menu toggle, default on): leading space after a word, lowercase first word mid-sentence (keeps I/acronyms/mixed case), terminal style — no trailing period, lowercase start — in known terminal apps. Context = ≤3 chars before the cursor via AX; unreadable context → transcript only trimmed | Inserted text reads naturally in prose and in shells |
 | 5 🟡 | Vocabulary as "when I say → type" replacement rules (Settings window; whole-word, case-insensitive, flexible spacing/hyphens, longest phrase first), applied before smart formatting. Acoustic biasing (FluidAudio CTC boosting, +~100 MB model) deferred | Day 1 misrecognitions (MUX→tmux, within PM→with npm) fixed by rules; homophones (pain/pane) out of reach |
-| 6 | Local metrics (counts, p50/p95 latency, failures by reason — never text), dogfooding | Daily-use report and go/no-go |
+| 6 🟡 | Local metrics: one text-free event per push-to-talk (outcome, failure reason, engine, audio length, release→transcript and transcript→⌘V timings, word count) in `~/Library/Application Support/voxim/metrics.jsonl`, 90-day retention; menu "today" line; Settings › Usage tab (period, p50/p95, failures by reason, reset, reveal file). Then dogfooding | Daily-use report and go/no-go |
 
 ## Testing
 
 - Unit: `FnHoldDetector` (hold vs tap, fn as modifier, other modifiers, keys while recording, Esc cancel, tap reset); `ModelStatus` (late progress can't override ready).
+- Unit: metrics (summary/percentiles, persistence, 90-day pruning, corrupt line, reset, stored keys are text-free, error→reason mapping).
 - Unit: `ReplacementEngine` (Day 1 outputs, whole words, flexible spacing, longest-first, literal regex chars, Unicode boundaries).
 - Unit: `TextFormatter` (start of field, after sentence end, mid-sentence, special first words, brackets/prefixes, terminal style).
 - Unit: `PasteInserter` with a private pasteboard and fake ⌘V poster (restore, transient marker, empty clipboard, clipboard changed meanwhile, secure input refused).
@@ -58,3 +59,17 @@ Support/    Log (no transcript contents), Duration helpers
 - Restoring the clipboard is best-effort: exotic promised/lazy pasteboard types may not round-trip.
 - The paste is posted with explicit ⌘-only flags so modifiers the user happens to hold don't alter it; check apps with custom key handling.
 - Recording starts 300 ms after fn goes down, so speech in that window is lost; the HUD appearing is the cue to talk. Tune after dogfooding.
+
+## Dogfooding (after step 6)
+
+Use voxim for daily work for a week, then read Settings › Usage (7 days) against the design's gates, adapted to dictation:
+
+| Gate | Where to read it |
+|---|---|
+| Typed into the intended field ≥ 90% | "Typed successfully" (cancels and accidental taps excluded) |
+| No text typed into the wrong app | "Focus changed" failures are the guard working; any wrong-app typing observed by hand is a blocker |
+| Fast enough not to notice | "Release → text typed" p95 (target: under ~500 ms) |
+| Voluntary daily use after the novelty period | Dictations and words per day in the second half of the week |
+| Where it fails | Failures by reason → next fixes (e.g. many "No focused field" → revisit focus detection) |
+
+Also note by hand when speaking helped or hurt versus typing; the metrics deliberately hold no text.

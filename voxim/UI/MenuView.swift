@@ -18,6 +18,9 @@ struct MenuView: View {
                 Text(controller.activeEngine).font(.caption).foregroundStyle(.secondary)
             }
             status
+            Text(todaySummary)
+                .font(.caption.monospacedDigit())
+                .foregroundStyle(.secondary)
 
 
             Divider()
@@ -70,6 +73,14 @@ struct MenuView: View {
         }
         .padding(14)
         .frame(width: 320)
+    }
+
+    private var todaySummary: String {
+        let today = controller.metrics.summary(since: Calendar.current.startOfDay(for: .now))
+        guard today.dictations > 0 else { return "No dictations today" }
+        var parts = ["Today: \(today.dictations) dictation\(today.dictations == 1 ? "" : "s")", "\(today.words) words"]
+        if let p50 = today.totalP50 { parts.append(String(format: "typical %.0f ms", p50)) }
+        return parts.joined(separator: " · ")
     }
 
     private var vocabularySummary: String {

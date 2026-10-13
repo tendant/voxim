@@ -44,7 +44,14 @@ struct voximApp: App {
         .menuBarExtraStyle(.window)
 
         Settings {
-            VocabularySettingsView(store: controller.replacements)
+            TabView {
+                Tab("Vocabulary", systemImage: "character.book.closed") {
+                    VocabularySettingsView(store: controller.replacements)
+                }
+                Tab("Usage", systemImage: "chart.bar") {
+                    UsageView(store: controller.metrics)
+                }
+            }
         }
     }
 

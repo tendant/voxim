@@ -28,7 +28,10 @@ nonisolated enum InsertionError: LocalizedError, Equatable {
 
 /// Where dictated text goes. Implementations insert at the cursor and never press Return.
 protocol DictationSink {
-    func insert(_ text: String, expecting app: FocusedApp?) async throws
+    /// Returns when the text was handed to the target app (for latency metrics); any
+    /// cleanup afterwards (e.g. restoring the clipboard) may still be in progress.
+    @discardableResult
+    func insert(_ text: String, expecting app: FocusedApp?) async throws -> ContinuousClock.Instant
 }
 
 /// The app that had focus when recording started; insertion is refused if focus moved.
