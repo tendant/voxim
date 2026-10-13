@@ -10,6 +10,9 @@ struct MenuView: View {
     @AppStorage(AppController.smartFormattingKey) private var smartFormatting = true
     @AppStorage(AppController.preRollKey) private var preRoll = true
     @State private var launchAtLoginEnabled = false
+    /// The menu-bar panel hosting this view. It only auto-closes when voxim deactivates, so
+    /// opening voxim's own Settings window must close it explicitly.
+    @State private var menuWindow: NSWindow?
 
     var body: some View {
         VStack(alignment: .leading, spacing: 12) {
@@ -66,7 +69,7 @@ struct MenuView: View {
             HStack {
                 Text(vocabularySummary).font(.callout)
                 Spacer()
-                Button("Edit…") { SettingsWindow.shared.show(controller, tab: .vocabulary) }
+                Button("Edit…") { openSettings(tab: .vocabulary) }
             }
             if let action = GlobeKeySetting.conflictingAction {
                 Text("Your 🌐 key is set to “\(action)”, which also fires when you release fn. Set System Settings › Keyboard › “Press 🌐 key to” to Do Nothing.")
@@ -79,7 +82,7 @@ struct MenuView: View {
             launchAtLogin
             HStack {
                 Button {
-                    SettingsWindow.shared.show(controller)
+                    openSettings()
                 } label: {
                     Label("Settings…", systemImage: "gearshape")
                 }
@@ -90,6 +93,14 @@ struct MenuView: View {
         }
         .padding(14)
         .frame(width: 320)
+        .background(WindowReader { window in
+            if menuWindow !== window { menuWindow = window }
+        })
+    }
+
+    private func openSettings(tab: SettingsTab? = nil) {
+        menuWindow?.close()
+        SettingsWindow.shared.show(controller, tab: tab)
     }
 
     @ViewBuilder private var launchAtLogin: some View {
@@ -147,4 +158,26 @@ struct MenuView: View {
             Label(message, systemImage: "exclamationmark.triangle.fill").foregroundStyle(.orange)
         }
     }
+}
+
+/// Reports the NSWindow hosting a SwiftUI view, once it's attached (no per-render updates).
+private struct WindowReader: NSViewRepresentable {
+    let onWindow: (NSWindow?) -> Void
+
+    final class ReaderView: NSView {
+        var onWindow: ((NSWindow?) -> Void)?
+
+        override func viewDidMoveToWindow() {
+            super.viewDidMoveToWindow()
+            onWindow?(window)
+        }
+    }
+
+    func makeNSView(context: Context) -> ReaderView {
+        let view = ReaderView()
+        view.onWindow = onWindow
+        return view
+    }
+
+    func updateNSView(_ nsView: ReaderView, context: Context) {}
 }
