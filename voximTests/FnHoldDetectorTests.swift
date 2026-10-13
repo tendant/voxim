@@ -9,6 +9,8 @@ import Testing
 
 struct FnHoldDetectorTests {
     let fn: CGEventFlags = .maskSecondaryFn
+    let leftArrow: Int64 = 123
+    let esc = FnHoldDetector.escapeKey
 
     @Test func longHoldStartsAndReleaseStops() {
         var d = FnHoldDetector()
@@ -31,7 +33,7 @@ struct FnHoldDetectorTests {
     @Test func fnAsModifierForAnotherKeyNeverStarts() {
         var d = FnHoldDetector()
         #expect(d.handle(.flagsChanged(fn)) == .arm)
-        #expect(d.handle(.keyDown) == .disarm)            // e.g. fn+← (Home)
+        #expect(d.handle(.keyDown(keyCode: leftArrow)) == .disarm)  // fn+← (Home)
         #expect(d.handle(.holdElapsed) == nil)
         #expect(d.handle(.flagsChanged([])) == nil)
         // Next clean hold works again.
@@ -57,7 +59,7 @@ struct FnHoldDetectorTests {
         var d = FnHoldDetector()
         _ = d.handle(.flagsChanged(fn))
         _ = d.handle(.holdElapsed)
-        #expect(d.handle(.keyDown) == nil)
+        #expect(d.handle(.keyDown(keyCode: leftArrow)) == nil)
         #expect(d.handle(.flagsChanged([fn, .maskShift])) == nil)
         #expect(d.isActive)
         #expect(d.handle(.flagsChanged(.maskShift)) == .release)
@@ -76,5 +78,24 @@ struct FnHoldDetectorTests {
         _ = active.handle(.holdElapsed)
         #expect(active.reset() == .release)
         #expect(!active.isActive)
+    }
+
+    @Test func escCancelsRecordingAndFnReleaseDoesNothingAfter() {
+        var d = FnHoldDetector()
+        _ = d.handle(.flagsChanged(fn))
+        _ = d.handle(.holdElapsed)
+        #expect(d.handle(.keyDown(keyCode: esc)) == .cancel)
+        #expect(!d.isActive)
+        #expect(d.handle(.flagsChanged([])) == nil)
+        // Next hold starts normally.
+        #expect(d.handle(.flagsChanged(fn)) == .arm)
+    }
+
+    @Test func escOutsideRecordingIsLeftAlone() {
+        var d = FnHoldDetector()
+        #expect(d.handle(.keyDown(keyCode: esc)) == nil)
+        _ = d.handle(.flagsChanged(fn))
+        // fn+esc before the threshold is a normal key combo, not a cancel.
+        #expect(d.handle(.keyDown(keyCode: esc)) == .disarm)
     }
 }

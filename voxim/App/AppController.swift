@@ -27,6 +27,7 @@ final class AppController {
     /// Last transcript that could not be typed; offered for copying. Cleared on the next recording.
     private(set) var undelivered = ""
     private(set) var activeEngine = ""
+    let modelStatus: ModelStatus
 
     private let transcriber: FallbackTranscriber
     private let sink: any DictationSink
@@ -38,19 +39,30 @@ final class AppController {
     /// Called whenever the HUD should change visibility.
     var onHUDVisibilityChange: ((Bool) -> Void)?
 
-    init(
-        transcriber: FallbackTranscriber = FallbackTranscriber(
-            primary: ParakeetTranscriber(), fallback: AppleSpeechTranscriber()
-        ),
-        sink: any DictationSink = PasteInserter()
-    ) {
-        self.transcriber = transcriber
+    init(sink: any DictationSink = PasteInserter()) {
+        let modelStatus = ModelStatus()
+        let parakeet = ParakeetTranscriber { event in
+            switch event {
+            case .downloading(let fraction): modelStatus.post(.downloading(fraction: fraction))
+            case .compiling: modelStatus.post(.compiling)
+            }
+        }
+        self.modelStatus = modelStatus
+        self.transcriber = FallbackTranscriber(primary: parakeet, fallback: AppleSpeechTranscriber())
         self.sink = sink
+
+        let transcriber = self.transcriber
         Task {
             do {
                 try await transcriber.prepare()
             } catch {
                 fail(error.localizedDescription)
+            }
+            await refreshEngineName()
+            if let error = await transcriber.waitForPrimary() {
+                modelStatus.update(.failed(error.localizedDescription))
+            } else {
+                modelStatus.update(.ready)
             }
             await refreshEngineName()
         }
@@ -107,6 +119,15 @@ final class AppController {
         }
         setPhase(.transcribing)
         Task { await transcribeAndInsert(clip) }
+    }
+
+    /// Esc while recording: discard the audio without transcribing or typing anything.
+    func cancelRecording() {
+        guard phase == .recording else { return }
+        _ = capture.stop()
+        pressStarted = nil
+        Log.app.info("recording cancelled")
+        setPhase(.idle)
     }
 
     func dismiss() {

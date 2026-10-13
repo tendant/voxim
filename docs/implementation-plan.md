@@ -24,10 +24,10 @@ A local-first macOS menu-bar dictation tool: **hold fn**, speak, release, and th
 
 ```
 App/        voximApp (MenuBarExtra + HUD wiring), AppController (idle→recording→transcribing→inserted|failed)
-Input/      ShortcutManager (fn event tap, 🌐 setting check), FnHoldDetector, AudioCapture (16 kHz mono, memory only)
-ASR/        Transcriber, AppleSpeechTranscriber, ParakeetTranscriber, FallbackTranscriber
+Input/      ShortcutManager (fn event tap, Esc cancel, 🌐 setting check), FnHoldDetector, AudioCapture (16 kHz mono, memory only)
+ASR/        Transcriber, AppleSpeechTranscriber, ParakeetTranscriber, FallbackTranscriber, ModelStatus
 Dictation/  DictationSink, PasteInserter (clipboard snapshot/restore + ⌘V), AXAccess, FocusedApp
-UI/         MenuView (status, shortcut hint, permission prompt), StatusHUD (non-activating, never key)
+UI/         MenuView (status, shortcut hint), SetupSection (mic / Accessibility / model checklist), StatusHUD (non-activating, never key)
 Support/    Log (no transcript contents), Duration helpers
 ```
 
@@ -37,14 +37,14 @@ Support/    Log (no transcript contents), Duration helpers
 |---|---|---|
 | 1 ✅ | Project setup, audio capture, ASR spike | Local ASR works; Parakeet v2 chosen |
 | 2 🟡 | Hold fn → transcribe → paste at cursor; HUD; permission handling; clipboard restore | Works in VS Code, Safari/Chrome text field, Notes, Slack, Ghostty; clipboard unchanged afterwards; never presses Return |
-| 3 | Esc cancels while recording; first-run onboarding for both permissions; model-download progress in menu | No dead ends on a fresh install |
+| 3 🟡 | Esc cancels while recording (swallowed only then); menu setup checklist for mic, Accessibility and speech model with fix-it buttons; Parakeet download/compile progress, Apple speech used meanwhile | No dead ends on a fresh install |
 | 4 | Text cleanup options: auto-capitalize/trailing punctuation off for terminals, leading space when appending mid-sentence | Inserted text reads naturally in prose and in shells |
 | 5 | Custom vocabulary / replacements (e.g. "tmux", project names) | Spike phrases misrecognized on Day 1 come out right |
 | 6 | Local metrics (counts, p50/p95 latency, failures by reason — never text), dogfooding | Daily-use report and go/no-go |
 
 ## Testing
 
-- Unit: `FnHoldDetector` (hold vs tap, fn as modifier, other modifiers, keys while recording, tap reset).
+- Unit: `FnHoldDetector` (hold vs tap, fn as modifier, other modifiers, keys while recording, Esc cancel, tap reset); `ModelStatus` (late progress can't override ready).
 - Unit: `PasteInserter` with a private pasteboard and fake ⌘V poster (restore, transient marker, empty clipboard, clipboard changed meanwhile, secure input refused).
 - Manual matrix: target apps × {normal, focus switched mid-speech, password field, no focused field, Accessibility revoked, mic denied}.
 

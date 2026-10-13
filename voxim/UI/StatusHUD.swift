@@ -53,8 +53,14 @@ struct HUDView: View {
         VStack(alignment: .leading, spacing: 8) {
             switch controller.phase {
             case .recording:
-                Label("Listening…", systemImage: "mic.fill")
-                    .foregroundStyle(.red)
+                HStack {
+                    Label("Listening…", systemImage: "mic.fill")
+                        .foregroundStyle(.red)
+                    Spacer()
+                    Text("release fn to type · esc to cancel")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                }
             case .transcribing:
                 Label("Transcribing…", systemImage: "waveform")
             case .failed(let message):

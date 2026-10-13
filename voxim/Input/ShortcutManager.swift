@@ -3,8 +3,9 @@
 //  voxim
 //
 //  Hold-fn push-to-talk via a session event tap. Carbon hotkeys can't express fn, so this
-//  needs Accessibility access (the same grant used to type into other apps). Events are
-//  observed only; nothing is swallowed, so fn keeps working as a modifier.
+//  needs Accessibility access (the same grant used to type into other apps). Events pass
+//  through untouched, so fn keeps working as a modifier; the one exception is Esc pressed
+//  while recording, which cancels and is swallowed.
 //
 
 import CoreGraphics
@@ -18,15 +19,17 @@ final class ShortcutManager {
 
     private let onPress: () -> Void
     private let onRelease: () -> Void
+    private let onCancel: () -> Void
     private var detector = FnHoldDetector()
     private var holdTimer: Task<Void, Never>?
     private var tap: CFMachPort?
     private var runLoopSource: CFRunLoopSource?
     private var retryTimer: Timer?
 
-    init(onPress: @escaping () -> Void, onRelease: @escaping () -> Void) {
+    init(onPress: @escaping () -> Void, onRelease: @escaping () -> Void, onCancel: @escaping () -> Void) {
         self.onPress = onPress
         self.onRelease = onRelease
+        self.onCancel = onCancel
     }
 
     var isRunning: Bool { tap != nil }
@@ -56,8 +59,8 @@ final class ShortcutManager {
             eventsOfInterest: CGEventMask(mask),
             callback: { _, type, event, refcon in
                 let manager = Unmanaged<ShortcutManager>.fromOpaque(refcon!).takeUnretainedValue()
-                MainActor.assumeIsolated { manager.handle(type, event) }
-                return Unmanaged.passUnretained(event)
+                let swallow = MainActor.assumeIsolated { manager.handle(type, event) }
+                return swallow ? nil : Unmanaged.passUnretained(event)
             },
             userInfo: Unmanaged.passUnretained(self).toOpaque()
         ) else {
@@ -73,19 +76,23 @@ final class ShortcutManager {
         return true
     }
 
-    private func handle(_ type: CGEventType, _ event: CGEvent) {
+    /// Returns true when the event must not reach the focused app (only Esc that cancels a recording).
+    private func handle(_ type: CGEventType, _ event: CGEvent) -> Bool {
+        let action: FnHoldDetector.Action?
         switch type {
         case .tapDisabledByTimeout, .tapDisabledByUserInput:
             // macOS disables slow taps; re-enable and end any recording rather than leave it stuck.
             if let tap { CGEvent.tapEnable(tap: tap, enable: true) }
-            perform(detector.reset())
+            action = detector.reset()
         case .flagsChanged:
-            perform(detector.handle(.flagsChanged(event.flags)))
+            action = detector.handle(.flagsChanged(event.flags))
         case .keyDown:
-            perform(detector.handle(.keyDown))
+            action = detector.handle(.keyDown(keyCode: event.getIntegerValueField(.keyboardEventKeycode)))
         default:
-            break
+            action = nil
         }
+        perform(action)
+        return action == .cancel
     }
 
     private func perform(_ action: FnHoldDetector.Action?) {
@@ -105,6 +112,8 @@ final class ShortcutManager {
             onPress()
         case .release:
             onRelease()
+        case .cancel:
+            onCancel()
         case nil:
             break
         }

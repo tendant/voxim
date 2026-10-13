@@ -14,7 +14,7 @@ actor FallbackTranscriber: Transcriber {
     private let primary: any Transcriber
     private let fallback: any Transcriber
     private var primaryReady = false
-    private var primaryLoad: Task<Void, Never>?
+    private var primaryLoad: Task<(any Error)?, Never>?
 
     init(primary: any Transcriber, fallback: any Transcriber) {
         self.primary = primary
@@ -31,12 +31,20 @@ actor FallbackTranscriber: Transcriber {
                 do {
                     try await primary.prepare()
                     self.markPrimaryReady()
+                    return nil
                 } catch {
                     Log.asr.error("primary ASR failed to load: \(error.localizedDescription, privacy: .public)")
+                    return error
                 }
             }
         }
         try await fallback.prepare()
+    }
+
+    /// Waits for the primary engine to finish loading; returns its load error, if any.
+    /// Call after `prepare()`.
+    func waitForPrimary() async -> (any Error)? {
+        await primaryLoad?.value
     }
 
     func transcribe(_ clip: AudioClip) async throws -> String {

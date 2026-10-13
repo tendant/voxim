@@ -17,12 +17,9 @@ struct MenuView: View {
             }
             status
 
-            if !AXAccess.isTrusted {
-                Text("The fn shortcut and typing into apps need Accessibility access.")
-                    .font(.caption)
-                    .foregroundStyle(.orange)
-                Button("Grant Accessibility Access…", action: AXAccess.openSettings)
-            }
+
+            Divider()
+            SetupSection(modelStatus: controller.modelStatus)
 
             Divider()
             HStack {

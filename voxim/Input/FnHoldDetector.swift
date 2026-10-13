@@ -7,13 +7,14 @@
 //  recording. Pure logic; the caller owns the timer and the event tap.
 //
 
+import Carbon.HIToolbox
 import CoreGraphics
 
 nonisolated struct FnHoldDetector {
     enum Event {
         case flagsChanged(CGEventFlags)
-        /// Any non-modifier key went down.
-        case keyDown
+        /// A non-modifier key went down.
+        case keyDown(keyCode: Int64)
         /// The hold timer scheduled on `.arm` fired.
         case holdElapsed
     }
@@ -25,7 +26,11 @@ nonisolated struct FnHoldDetector {
         case disarm
         case press
         case release
+        /// Esc while recording: discard the recording. The Esc must be swallowed.
+        case cancel
     }
+
+    static let escapeKey = Int64(kVK_Escape)
 
     private enum State {
         case idle
@@ -69,6 +74,11 @@ nonisolated struct FnHoldDetector {
         case (.armed, .holdElapsed):
             state = .active
             return .press
+
+        case (.active, .keyDown(let keyCode)) where keyCode == Self.escapeKey:
+            // Wait for fn to come up before anything can start again.
+            state = .suppressed
+            return .cancel
 
         case (.active, .flagsChanged(let flags)):
             // Other modifiers or keys while recording are ignored; only fn-up ends it.
