@@ -2,8 +2,10 @@
 //  AppController.swift
 //  voxim
 //
-//  Hold shortcut → record → transcribe locally → type into the focused field.
-//  Never presses Return. If typing isn't possible, the transcript stays available to copy.
+//  Runs dictations. The lifecycle lives in `DictationMachine` (pure); this class feeds it
+//  inputs, runs the effects it asks for (microphone, session, typing, metrics), and exposes
+//  observable state to the UI. Never presses Return; if typing isn't possible, the transcript
+//  stays available to copy.
 //
 
 import Foundation
@@ -22,43 +24,37 @@ final class AppController {
 
     /// Presses shorter than this are treated as accidental taps and discarded.
     static let minimumHold: Duration = .milliseconds(250)
-    /// UserDefaults key for context-aware cleanup (spacing, mid-sentence case, terminal style).
-    static let smartFormattingKey = "smartFormatting"
-    /// UserDefaults key: start the microphone when fn goes down rather than when the hold qualifies.
-    static let preRollKey = "preRoll"
-    static let languageModeKey = "languageMode"
-    static let chineseScriptKey = "chineseScript"
-    /// UserDefaults key: space between Chinese and English ("用 npm 安装").
-    static let cjkSpacingKey = "cjkLatinSpacing"
-    /// UserDefaults key: show what's been recognized so far while fn is held.
-    static let livePreviewKey = "livePreview"
-    /// UserDefaults key: type each sentence as soon as it's finished, instead of all at release.
-    static let typeAsYouSpeakKey = "typeAsYouSpeak"
-    /// UserDefaults key: double-tap fn locks recording on (hands-free).
-    static let handsFreeKey = "handsFree"
-    /// UserDefaults keys: hands-free silence auto-finish and maximum length, in seconds (0 = never).
-    static let handsFreeSilenceKey = "handsFreeSilence"
-    static let handsFreeMaximumKey = "handsFreeMaximum"
-    static let defaultHandsFreeSilence: TimeInterval = 300
-    static let defaultHandsFreeMaximum: TimeInterval = 3600
+    /// How often the live preview refreshes (it backs off when transcription is slower).
+    static let previewInterval: Duration = .milliseconds(450)
+    /// Too little audio to be worth a preview pass.
+    static let minimumPreviewAudio: TimeInterval = 0.4
 
-    /// Hands-free safety limits. Normally read from settings when hands-free starts;
-    /// injectable so tests don't wait minutes.
+    // Settings keys, kept here for the UI's `@AppStorage` and tests.
+    static let smartFormattingKey = Preferences.Key.smartFormatting
+    static let preRollKey = Preferences.Key.preRoll
+    static let languageModeKey = Preferences.Key.languageMode
+    static let chineseScriptKey = Preferences.Key.chineseScript
+    static let cjkSpacingKey = Preferences.Key.cjkSpacing
+    static let livePreviewKey = Preferences.Key.livePreview
+    static let typeAsYouSpeakKey = Preferences.Key.typeAsYouSpeak
+    static let handsFreeKey = Preferences.Key.handsFree
+    static let handsFreeSilenceKey = Preferences.Key.handsFreeSilence
+    static let handsFreeMaximumKey = Preferences.Key.handsFreeMaximum
+    static let defaultHandsFreeSilence = Preferences.defaultHandsFreeSilence
+    static let defaultHandsFreeMaximum = Preferences.defaultHandsFreeMaximum
+
+    /// Hands-free limits. Normally from settings; injectable so tests don't wait minutes.
     struct HandsFreeLimits {
         /// Finish automatically after this much continuous silence (`.infinity` = never).
-        var silence: TimeInterval = AppController.defaultHandsFreeSilence
+        var silence: TimeInterval = Preferences.defaultHandsFreeSilence
         /// Hard cap on a hands-free recording (`.infinity` = no limit).
-        var maximum: TimeInterval = AppController.defaultHandsFreeMaximum
+        var maximum: TimeInterval = Preferences.defaultHandsFreeMaximum
         /// Show a countdown this long before the cap.
         var warning: TimeInterval = 60
         /// After this much silence the HUD shrinks to a small "listening" pill.
         var idleAfter: TimeInterval = 5
         var checkInterval: Duration = .seconds(1)
     }
-    /// How often the live preview refreshes (it backs off when transcription is slower).
-    static let previewInterval: Duration = .milliseconds(450)
-    /// Too little audio to be worth a preview pass.
-    static let minimumPreviewAudio: TimeInterval = 0.4
 
     /// System access the controller needs; injectable so the flow can be tested headless.
     struct Permissions {
@@ -70,63 +66,92 @@ final class AppController {
         var requestMicrophone: () async -> Bool = { await AudioCapture.requestPermission() }
     }
 
-    private(set) var phase: Phase = .idle
+    // MARK: Observable state
+
+    /// The dictation lifecycle; everything below about the current recording derives from it.
+    private(set) var state: DictationMachine.State = .idle(nil)
     /// Last transcript that could not be typed; offered for copying. Cleared on the next recording.
     private(set) var undelivered = ""
     private(set) var activeEngine = ""
-    /// Language of the last successful dictation ("en", "zh"), shown in the menu.
+    /// Language of the last successful dictation ("en", "zh", "mixed"), shown in the menu.
     private(set) var lastLanguage: String?
     /// Text recognized so far while recording; on screen only, never typed, stored or counted.
     private(set) var livePreview = ""
-    /// Recording is locked on by a double-tap of fn; a tap finishes it.
-    private(set) var isHandsFree = false
     /// When the current recording started (HUD elapsed time).
     private(set) var recordingStartedAt: Date?
     /// Hands-free countdown before the cap, e.g. "Stops in 42 s".
     private(set) var handsFreeNotice: String?
     /// Hands-free and nobody has spoken for a few seconds: the HUD shrinks to a small pill.
     private(set) var isListeningIdle = false
-    /// Tells the shortcut layer whether hands-free is running (Esc handling).
-    var onHandsFreeChange: ((Bool) -> Void)?
-    let modelStatus: ModelStatus
-    /// Load state of the Chinese model (SenseVoice); only loaded when the language mode needs it.
-    let chineseModelStatus = ModelStatus()
+
+    var phase: Phase {
+        switch state {
+        case .idle(nil), .armed, .starting: .idle
+        case .idle(.inserted): .inserted
+        case .idle(.failed(let message)): .failed(message)
+        case .recording: .recording
+        case .finishing: .transcribing
+        }
+    }
+
+    /// Recording is locked on by a double-tap of fn; a tap finishes it.
+    var isHandsFree: Bool { state == .recording(.handsFree) }
+
+    var isHUDVisible: Bool {
+        switch phase {
+        case .recording, .transcribing, .failed: true
+        case .idle, .inserted: false
+        }
+    }
+
+    var isHandsFreeEnabled: Bool { Preferences(defaults).handsFree }
 
     var languageMode: LanguageMode {
         didSet {
-            defaults.set(languageMode.rawValue, forKey: Self.languageModeKey)
+            defaults.set(languageMode.rawValue, forKey: Preferences.Key.languageMode)
             if languageMode.needsChineseModel { loadChineseModel() }
         }
     }
+
+    let modelStatus: ModelStatus
+    /// Load state of the Chinese model (SenseVoice); only loaded when the language mode needs it.
+    let chineseModelStatus = ModelStatus()
     let replacements = ReplacementStore()
     let metrics: MetricsStore
-
-    private let engine: any SpeechEngine
-    private let voiceActivity: VoiceActivityModel?
-    /// The dictation being recorded; pieces are transcribed as pauses end them.
-    private var session: (any DictationSessioning)?
-    /// Types the session's pieces as they're committed ("type as you speak"); nil when typing at release.
-    private var typer: ProgressiveTyper?
-    private let speechClassifier: (@Sendable () -> (any SpeechClassifier)?)?
-    private let isTerminalFrontmost: () -> Bool
-    private let injectedHandsFreeLimits: HandsFreeLimits?
-    private var handsFreeMonitor: Task<Void, Never>?
-    private var chineseModelRequested = false
-    private let sink: any DictationSink
-    private let capture: any AudioCapturing
-    private let permissions: Permissions
-    private let defaults: UserDefaults
-    private var pressStarted: ContinuousClock.Instant?
-    private var keyHeld = false
-    private var focusAtStart: FocusedApp?
-    /// Mic started on fn-down, before the hold qualified. Discarded on disarm.
-    private var preRolling = false
-    private var previewTask: Task<Void, Never>?
 
     /// Called whenever the HUD should change visibility.
     var onHUDVisibilityChange: ((Bool) -> Void)?
     /// Called when the HUD's content changed size (live preview text grew).
     var onHUDContentChange: (() -> Void)?
+    /// Tells the shortcut layer whether hands-free is running (Esc handling).
+    var onHandsFreeChange: ((Bool) -> Void)?
+
+    // MARK: Dependencies
+
+    private let engine: any SpeechEngine
+    private let voiceActivity: VoiceActivityModel?
+    private let speechClassifier: (@Sendable () -> (any SpeechClassifier)?)?
+    private let isTerminalFrontmost: () -> Bool
+    private let injectedHandsFreeLimits: HandsFreeLimits?
+    private let sink: any DictationSink
+    private let capture: any AudioCapturing
+    private let permissions: Permissions
+    private let defaults: UserDefaults
+
+    // MARK: The current dictation (resources owned while not idle)
+
+    /// Settings and text rules, fixed when the dictation starts.
+    private var preferences = Preferences()
+    private var pipeline = TextPipeline(rules: [], preferences: Preferences())
+    /// Pieces are transcribed as pauses end them.
+    private var session: (any DictationSessioning)?
+    /// Types the session's pieces as they're committed ("type as you speak"); nil when typing at the end.
+    private var typer: ProgressiveTyper?
+    private var focusAtStart: FocusedApp?
+    private var pressStarted: ContinuousClock.Instant?
+    private var previewTask: Task<Void, Never>?
+    private var handsFreeMonitor: Task<Void, Never>?
+    private var chineseModelRequested = false
 
     init(
         sink: any DictationSink = PasteInserter(),
@@ -159,14 +184,15 @@ final class AppController {
         self.capture = capture
         self.permissions = permissions
         self.defaults = defaults
-        languageMode = LanguageMode(rawValue: defaults.string(forKey: Self.languageModeKey) ?? "") ?? .english
+        languageMode = LanguageMode(rawValue: defaults.string(forKey: Preferences.Key.languageMode) ?? "") ?? .english
 
         let engine = self.engine
         Task {
             do {
                 try await engine.prepareEnglish()
             } catch {
-                fail(error.localizedDescription)
+                state = .idle(.failed(error.localizedDescription))
+                onHUDVisibilityChange?(isHUDVisible)
             }
             await refreshEngineName()
             if let error = await engine.waitForEnglishPrimary() {
@@ -195,113 +221,124 @@ final class AppController {
         }
     }
 
-    var isHUDVisible: Bool {
-        switch phase {
-        case .recording, .transcribing, .failed: true
-        case .idle, .inserted: false
-        }
-    }
+    // MARK: Inputs
 
-    // MARK: Push-to-talk
-
+    /// Push-to-talk actions from the fn key.
     func handle(_ action: FnHoldDetector.Action) {
         switch action {
-        case .arm: armed()
-        case .disarm: disarmed()
-        case .press: keyDown()
-        case .release: keyUp()
-        case .cancel: cancelRecording()
-        case .tap:
-            // In hands-free, a tap finishes; otherwise it's a press too short to dictate.
-            if isHandsFree && phase == .recording { stopRecording() } else { disarmed() }
-        case .lock: lockRecording()
+        case .arm: send(.fnDown)
+        case .disarm: send(.fnDisarmed)
+        case .press: send(.holdStarted)
+        case .release: send(.fnReleased)
+        case .cancel: send(.escape)
+        case .tap: send(.tap)
+        case .lock: send(.doubleTap)
         }
     }
 
-    var isHandsFreeEnabled: Bool { defaults.object(forKey: Self.handsFreeKey) as? Bool ?? true }
-
-    /// Double-tap of fn: start a recording that stays on until fn is tapped again.
-    func lockRecording() {
-        guard isReady, isHandsFreeEnabled else { return }
-        if preRolling {
-            // The second tap's pre-roll is already capturing: keep it.
-            preRolling = false
-            beginRecording(handsFree: true)
-            return
-        }
-        if !permissions.isAccessibilityTrusted() {
-            permissions.requestAccessibility()
-            fail(InsertionError.accessibilityDenied)
-            return
-        }
-        Task {
-            guard await permissions.requestMicrophone() else {
-                fail(AudioCaptureError.microphoneDenied)
-                return
-            }
-            guard isReady else { return }
-            startSession()
-            do {
-                try capture.start()
-                beginRecording(handsFree: true)
-            } catch {
-                discardSession()
-                fail(error)
-            }
-        }
+    func dismiss() {
+        undelivered = ""
+        send(.dismiss)
     }
 
-    private var isReady: Bool {
-        switch phase {
-        case .idle, .inserted, .failed: true
-        case .recording, .transcribing: false
-        }
+    #if DEBUG
+    /// Debug-only: puts the HUD in the recording state with the given preview text.
+    func debugShowPreview(_ text: String) {
+        setState(.recording(.hold))
+        livePreview = text
+        onHUDContentChange?()
+    }
+    #endif
+
+    /// Reduces one input and runs the resulting effects.
+    private func send(_ input: DictationMachine.Input) {
+        let transition = DictationMachine.reduce(state, input, facts())
+        let previous = state
+        setState(transition.state)
+        if previous.isRecording && !transition.state.isRecording { endRecordingUI() }
+        for effect in transition.effects { run(effect) }
     }
 
-    /// fn went down alone: start the mic now so the first syllable isn't lost while waiting
-    /// out the hold threshold. Silent (no HUD) and only if both permissions are already granted;
-    /// anything else is handled by `keyDown()` once the hold qualifies.
-    func armed() {
-        guard defaults.object(forKey: Self.preRollKey) as? Bool ?? true,
-              isReady, !preRolling,
-              permissions.isAccessibilityTrusted(), permissions.isMicrophoneGranted()
-        else { return }
-        startSession()
-        do {
-            try capture.start()
-            preRolling = true
-        } catch {
+    private func facts() -> DictationMachine.Facts {
+        let preferences = Preferences(defaults)
+        let held = pressStarted.map { ContinuousClock.now - $0 } ?? .zero
+        return DictationMachine.Facts(
+            canPreRoll: preferences.preRoll && permissions.isAccessibilityTrusted() && permissions.isMicrophoneGranted(),
+            accessibilityTrusted: permissions.isAccessibilityTrusted(),
+            handsFreeEnabled: preferences.handsFree,
+            heldLongEnough: held >= Self.minimumHold
+        )
+    }
+
+    private func setState(_ newState: DictationMachine.State) {
+        let wasHandsFree = isHandsFree
+        let wasVisible = isHUDVisible
+        state = newState
+        if isHandsFree != wasHandsFree { onHandsFreeChange?(isHandsFree) }
+        if isHUDVisible != wasVisible || newState.isRecording { onHUDVisibilityChange?(isHUDVisible) }
+    }
+
+    // MARK: Effects
+
+    private func run(_ effect: DictationMachine.Effect) {
+        switch effect {
+        case .startCapture:
+            startCapture()
+        case .discardCapture:
+            _ = capture.stop()
             discardSession()
-            Log.app.error("pre-roll start failed: \(error.localizedDescription, privacy: .public)")
+        case .beginRecording(let trigger):
+            beginRecording(trigger)
+        case .finish(let trigger):
+            finish(handsFree: trigger == .handsFree)
+        case .cancel:
+            _ = capture.stop()
+            discardSession()
+            metrics.record(DictationEvent(date: .now, outcome: .cancelled, audioSeconds: capture.capturedSeconds))
+            Log.app.info("recording cancelled")
+        case .requestMicrophone:
+            Task {
+                let granted = await permissions.requestMicrophone()
+                send(.microphoneAnswered(granted: granted))
+            }
+        case .requestAccessibility:
+            permissions.requestAccessibility()
+        case .recordTooShort:
+            metrics.record(DictationEvent(date: .now, outcome: .tooShort, audioSeconds: capture.capturedSeconds))
+        case .recordFailure(let reason):
+            metrics.record(DictationEvent(date: .now, outcome: .failed, reason: reason))
         }
     }
 
-    /// The fn press was a tap or a modifier: throw the pre-roll audio away unheard.
-    func disarmed() {
-        guard preRolling else { return }
-        preRolling = false
-        _ = capture.stop()
+    /// Snapshots the settings, creates the session (and typer), and starts the microphone.
+    private func startCapture() {
         discardSession()
-    }
-
-    /// Starts a dictation session and routes captured audio into it. Call before `capture.start()`.
-    private func startSession() {
-        discardSession()
+        preferences = Preferences(defaults)
+        pipeline = TextPipeline(rules: replacements.rules, preferences: preferences)
         let session = DictationSession(
             engine: engine, mode: languageMode, voiceActivity: voiceActivity, classifier: speechClassifier?()
         )
         self.session = session
         capture.onSamples = { session.feed($0) }
-        // Terminals type at release: terminal style (no trailing period) needs the whole text.
-        if defaults.object(forKey: Self.typeAsYouSpeakKey) as? Bool ?? true, !isTerminalFrontmost() {
+        // Terminals type at the end: terminal style (no trailing period) needs the whole text.
+        if preferences.typeAsYouSpeak, !isTerminalFrontmost() {
+            let pipeline = self.pipeline
             typer = ProgressiveTyper(
                 pieces: session.committedPieces,
-                format: { [weak self] text, typedSoFar in self?.formatPiece(text, after: typedSoFar) ?? "" },
+                format: { text, typedSoFar in
+                    // Only the first piece needs the real field (an Accessibility read).
+                    pipeline.piece(text, after: typedSoFar, context: typedSoFar.isEmpty ? FocusContext.current() : .unknown)
+                },
                 insert: { [weak self] text in
                     guard let self else { throw CancellationError() }
                     return try await self.sink.insert(text, expecting: self.focusAtStart)
                 }
             )
+        }
+        do {
+            try capture.start()
+        } catch {
+            send(.captureFailed(error.localizedDescription))
         }
     }
 
@@ -313,80 +350,76 @@ final class AppController {
         typer = nil
     }
 
-    func keyDown() {
-        keyHeld = true
-        guard isReady else { return }
-        if preRolling {
-            // Already capturing since fn-down; the clip keeps that audio.
-            preRolling = false
-            beginRecording()
-            return
-        }
-        if !permissions.isAccessibilityTrusted() {
-            permissions.requestAccessibility()
-            fail(InsertionError.accessibilityDenied)
-            return
-        }
-        Task {
-            guard await permissions.requestMicrophone() else {
-                fail(AudioCaptureError.microphoneDenied)
-                return
-            }
-            // Released while the permission check was pending: don't start a recording.
-            guard keyHeld else { return }
-            startSession()
-            do {
-                try capture.start()
-                beginRecording()
-            } catch {
-                discardSession()
-                fail(error)
-            }
-        }
-    }
-
-    private func beginRecording(handsFree: Bool = false) {
+    private func beginRecording(_ trigger: DictationMachine.Trigger) {
         pressStarted = .now
         recordingStartedAt = .now
         focusAtStart = FocusedApp.current
         undelivered = ""
-        if handsFree {
-            isHandsFree = true
-            onHandsFreeChange?(true)
-            startHandsFreeMonitor()
-        }
-        setPhase(.recording)
+        if trigger == .handsFree { startHandsFreeMonitor() }
         startLivePreview()
     }
 
-    // MARK: Hands-free
+    /// Leaving the recording state, however it happened.
+    private func endRecordingUI() {
+        previewTask?.cancel()
+        previewTask = nil
+        livePreview = ""
+        handsFreeMonitor?.cancel()
+        handsFreeMonitor = nil
+        handsFreeNotice = nil
+        isListeningIdle = false
+        recordingStartedAt = nil
+        pressStarted = nil
+    }
 
-    /// Finishes a hands-free recording on long silence, and at the cap (with a countdown first).
-    /// Current limits: injected (tests) or from settings, where 0 means "never".
+    /// Stops the microphone and hands the session to the typing pipeline.
+    private func finish(handsFree: Bool) {
+        _ = capture.stop()
+        let capturedSeconds = capture.capturedSeconds
+        capture.onSamples = nil
+        guard let session else {
+            send(.finished(.failed("Nothing was recorded. Try again.")))
+            return
+        }
+        let typer = self.typer
+        self.session = nil
+        self.typer = nil
+        let releasedAt = ContinuousClock.now
+        Task {
+            let outcome = if let typer {
+                await finishTypingAsYouSpeak(session, typer: typer, audioSeconds: capturedSeconds,
+                                             handsFree: handsFree, releasedAt: releasedAt)
+            } else {
+                await transcribeAndInsert(session, audioSeconds: capturedSeconds, handsFree: handsFree,
+                                          releasedAt: releasedAt)
+            }
+            send(.finished(outcome))
+        }
+    }
+
+    // MARK: Hands-free monitor
+
     private var handsFreeLimits: HandsFreeLimits {
         if let injectedHandsFreeLimits { return injectedHandsFreeLimits }
-        func seconds(_ key: String, _ fallback: TimeInterval) -> TimeInterval {
-            let value = defaults.object(forKey: key) as? Double ?? fallback
-            return value > 0 ? value : .infinity
-        }
         var limits = HandsFreeLimits()
-        limits.silence = seconds(Self.handsFreeSilenceKey, Self.defaultHandsFreeSilence)
-        limits.maximum = seconds(Self.handsFreeMaximumKey, Self.defaultHandsFreeMaximum)
+        limits.silence = preferences.handsFreeSilence
+        limits.maximum = preferences.handsFreeMaximum
         return limits
     }
 
+    /// Finishes a hands-free recording on long silence or at the cap (with a countdown first),
+    /// and flags the idle state for the compact HUD.
     private func startHandsFreeMonitor() {
         handsFreeMonitor?.cancel()
         let limits = handsFreeLimits
         handsFreeMonitor = Task { [weak self] in
             while !Task.isCancelled {
                 try? await Task.sleep(for: limits.checkInterval)
-                guard let self, !Task.isCancelled, self.isHandsFree, self.phase == .recording,
-                      let started = self.recordingStartedAt else { return }
+                guard let self, !Task.isCancelled, self.isHandsFree, let started = self.recordingStartedAt else { return }
                 let elapsed = Date.now.timeIntervalSince(started)
                 if elapsed >= limits.maximum {
                     Log.app.info("hands-free: reached the time limit")
-                    self.stopRecording()
+                    self.send(.autoStop)
                     return
                 }
                 let remaining = limits.maximum - elapsed
@@ -395,8 +428,7 @@ final class AppController {
                     self.handsFreeNotice = notice
                     self.onHUDContentChange?()
                 }
-                guard let silence = await self.session?.secondsSinceSpeech(),
-                      self.isHandsFree, self.phase == .recording else { continue }
+                guard let silence = await self.session?.secondsSinceSpeech(), self.isHandsFree else { continue }
                 let idle = silence >= limits.idleAfter
                 if idle != self.isListeningIdle {
                     self.isListeningIdle = idle
@@ -404,45 +436,24 @@ final class AppController {
                 }
                 if silence >= limits.silence {
                     Log.app.info("hands-free: stopped after \(Int(silence)) s of silence")
-                    self.stopRecording()
+                    self.send(.autoStop)
                     return
                 }
             }
         }
     }
 
-    private func endHandsFree() {
-        handsFreeMonitor?.cancel()
-        handsFreeMonitor = nil
-        handsFreeNotice = nil
-        isListeningIdle = false
-        if isHandsFree {
-            isHandsFree = false
-            onHandsFreeChange?(false)
-        }
-    }
-
-    #if DEBUG
-    /// Debug-only: puts the HUD in the recording state with the given preview text.
-    func debugShowPreview(_ text: String) {
-        setPhase(.recording)
-        livePreview = text
-        onHUDContentChange?()
-    }
-    #endif
-
     // MARK: Live preview
 
-    /// Re-transcribes the audio captured so far, repeatedly, while recording. None of the
-    /// engines stream natively, but they're fast enough (≈10–60 ms) to rerun on the growing clip.
+    /// Re-transcribes the piece in progress, repeatedly, while recording.
     private func startLivePreview() {
-        stopLivePreview()
-        guard defaults.object(forKey: Self.livePreviewKey) as? Bool ?? true else { return }
+        previewTask?.cancel()
+        guard preferences.livePreview else { return }
         previewTask = Task { [weak self] in
             var interval = Self.previewInterval
             while !Task.isCancelled {
                 try? await Task.sleep(for: interval)
-                guard let self, !Task.isCancelled, self.phase == .recording else { return }
+                guard let self, !Task.isCancelled, self.state.isRecording else { return }
                 // Only the piece in progress is re-transcribed; committed pieces are already text.
                 let (committed, tail, language) = await self.session?.previewState()
                     ?? ("", self.capture.snapshot(), nil)
@@ -453,10 +464,10 @@ final class AppController {
                         tail, mode: self.languageMode, languageHint: language) else { continue }
                     tailText = transcript.text.trimmed
                 }
-                guard !Task.isCancelled, self.phase == .recording else { return }
+                guard !Task.isCancelled, self.state.isRecording else { return }
                 // When typing as you speak, committed text is already in the app: show just the tail.
                 let shown = self.typer != nil ? tailText : ChineseText.join(committed, tailText)
-                let text = self.applyTextRules(shown).trimmed
+                let text = self.pipeline.applyRules(shown).trimmed
                 if text != self.livePreview {
                     self.livePreview = text
                     self.onHUDContentChange?()
@@ -467,109 +478,39 @@ final class AppController {
         }
     }
 
-    private func stopLivePreview() {
-        previewTask?.cancel()
-        previewTask = nil
-        livePreview = ""
-    }
+    // MARK: Typing pipeline
 
-    func keyUp() {
-        keyHeld = false
-        stopRecording()
-    }
-
-    /// Ends the recording (fn released, or tapped in hands-free) and types the result.
-    func stopRecording() {
-        guard phase == .recording else { return }
-        let handsFree = isHandsFree
-        endHandsFree()
-        recordingStartedAt = nil
-        stopLivePreview()
-        _ = capture.stop()
-        let capturedSeconds = capture.capturedSeconds
-        capture.onSamples = nil
-        let held = pressStarted.map { ContinuousClock.now - $0 } ?? .zero
-        pressStarted = nil
-        // The accidental-tap filter is for hold-to-talk; hands-free was started deliberately.
-        guard held >= Self.minimumHold || handsFree, let session else {
-            discardSession()
-            metrics.record(DictationEvent(date: .now, outcome: .tooShort, audioSeconds: capturedSeconds))
-            setPhase(.idle)
-            return
-        }
-        self.session = nil
-        let typer = self.typer
-        self.typer = nil
-        setPhase(.transcribing)
-        let releasedAt = ContinuousClock.now
-        Task {
-            if let typer {
-                await finishTypingAsYouSpeak(session, typer: typer, audioSeconds: capturedSeconds,
-                                             handsFree: handsFree, releasedAt: releasedAt)
-            } else {
-                await transcribeAndInsert(session, audioSeconds: capturedSeconds, handsFree: handsFree, releasedAt: releasedAt)
-            }
-        }
-    }
-
-    /// Esc while recording: discard the audio without transcribing or typing anything.
-    func cancelRecording() {
-        guard phase == .recording else { return }
-        endHandsFree()
-        recordingStartedAt = nil
-        stopLivePreview()
-        _ = capture.stop()
-        discardSession()
-        pressStarted = nil
-        metrics.record(DictationEvent(date: .now, outcome: .cancelled, audioSeconds: capture.capturedSeconds))
-        Log.app.info("recording cancelled")
-        setPhase(.idle)
-    }
-
-    func dismiss() {
-        undelivered = ""
-        setPhase(.idle)
-    }
-
-    // MARK: Pipeline
-
+    /// Typing at the end: finish the session, format the whole text, type it once.
     private func transcribeAndInsert(
         _ session: any DictationSessioning, audioSeconds: TimeInterval, handsFree: Bool,
         releasedAt: ContinuousClock.Instant
-    ) async {
+    ) async -> DictationMachine.Outcome {
         // Text-free metrics event, filled in as the pipeline progresses.
         var event = DictationEvent(date: .now, outcome: .failed, audioSeconds: audioSeconds)
         if handsFree { event.handsFree = true }
         // Earlier pieces are already transcribed; this waits only for the last one.
         let result = await session.finish()
-        let text = result.text
         event.transcribeMS = (ContinuousClock.now - releasedAt).timeInterval * 1000
-        event.engine = result.engine
-        event.language = result.language
-        event.pieces = result.pieces
-        event.emptyPieces = result.emptyPieces
-        if let engine = result.engine { activeEngine = engine }
+        record(result, into: &event)
         Log.asr.info("transcribed \(audioSeconds, format: .fixed(precision: 1))s audio in \(result.pieces) pieces; release → text \(event.transcribeMS ?? 0, format: .fixed(precision: 0)) ms (\(result.language ?? "?", privacy: .public))")
 
+        let text = result.text
         if result.failures > 0 {
             event.reason = .recognitionFailed
             metrics.record(event)
             // Keep what was recognized: offer it to copy rather than losing the whole dictation.
-            undelivered = prepareForTyping(text).trimmed
-            fail(text.trimmed.isEmpty
-                 ? "Speech recognition failed. Try again."
-                 : "Part of the dictation couldn't be recognized, so nothing was typed. The rest is below.")
-            return
+            undelivered = pipeline.forTyping(text, context: FocusContext.current()).trimmed
+            return .failed(text.trimmed.isEmpty
+                ? "Speech recognition failed. Try again."
+                : "Part of the dictation couldn't be recognized, so nothing was typed. The rest is below.")
         }
         guard !text.trimmed.isEmpty else {
             event.reason = .nothingRecognized
             metrics.record(event)
-            fail("Nothing was recognized. Hold fn and try again.")
-            return
+            return .failed("Nothing was recognized. Hold fn and try again.")
         }
         let transcriptReady = ContinuousClock.now
-
-        let formatted = prepareForTyping(text)
+        let formatted = pipeline.forTyping(text, context: FocusContext.current())
         event.words = ChineseText.wordCount(formatted)
         do {
             let pastedAt = try await sink.insert(formatted, expecting: focusAtStart)
@@ -578,12 +519,12 @@ final class AppController {
             lastLanguage = event.language
             metrics.record(event)
             Log.app.info("inserted \(formatted.count) characters")
-            setPhase(.inserted)
+            return .inserted
         } catch {
             event.reason = .init(error)
             metrics.record(event)
             undelivered = formatted.trimmed
-            fail(error.localizedDescription)
+            return .failed(error.localizedDescription)
         }
     }
 
@@ -592,7 +533,7 @@ final class AppController {
     private func finishTypingAsYouSpeak(
         _ session: any DictationSessioning, typer: ProgressiveTyper, audioSeconds: TimeInterval,
         handsFree: Bool, releasedAt: ContinuousClock.Instant
-    ) async {
+    ) async -> DictationMachine.Outcome {
         var event = DictationEvent(date: .now, outcome: .failed, audioSeconds: audioSeconds)
         if handsFree { event.handsFree = true }
         let result = await session.finish()
@@ -600,11 +541,7 @@ final class AppController {
         await typer.wait()
         event.transcribeMS = (finishedAt - releasedAt).timeInterval * 1000
         if let typedAt = typer.lastTypedAt { event.typeMS = max(0, (typedAt - finishedAt).timeInterval * 1000) }
-        event.engine = result.engine
-        event.language = result.language
-        event.pieces = result.pieces
-        event.emptyPieces = result.emptyPieces
-        if let engine = result.engine { activeEngine = engine }
+        record(result, into: &event)
         event.words = ChineseText.wordCount(typer.typed + " " + typer.untyped.joined(separator: " "))
         Log.app.info("typed as you speak: \(result.pieces) pieces, release → done \((ContinuousClock.now - releasedAt).timeInterval * 1000, format: .fixed(precision: 0)) ms")
 
@@ -613,69 +550,25 @@ final class AppController {
             metrics.record(event)
             undelivered = typer.untyped.joined(separator: " ")
             let why = typer.insertionError?.localizedDescription ?? "Part of the dictation couldn't be recognized."
-            fail(typer.typed.isEmpty ? why : "Typing stopped partway. \(why)")
-            return
+            return .failed(typer.typed.isEmpty ? why : "Typing stopped partway. \(why)")
         }
         guard !typer.typed.trimmed.isEmpty else {
             event.reason = .nothingRecognized
             metrics.record(event)
-            fail("Nothing was recognized. Hold fn and try again.")
-            return
+            return .failed("Nothing was recognized. Hold fn and try again.")
         }
         event.outcome = .inserted
         lastLanguage = event.language
         metrics.record(event)
-        setPhase(.inserted)
+        return .inserted
     }
 
-    /// One committed piece → text to type, continuing from what this dictation already typed.
-    private func formatPiece(_ text: String, after typedSoFar: String) -> String {
-        let ruled = applyTextRules(text).trimmed
-        guard !ruled.isEmpty else { return "" }
-        guard defaults.object(forKey: Self.smartFormattingKey) as? Bool ?? true else {
-            return String(ChineseText.join(typedSoFar, ruled).dropFirst(typedSoFar.count))
-        }
-        // The first piece sees the real field; later ones continue from what was just typed.
-        let context = typedSoFar.isEmpty
-            ? FocusContext.current()
-            : InsertionContext(precedingText: String(typedSoFar.suffix(3)), isTerminal: false)
-        return TextFormatter.format(ruled, context: context, spaceBetweenCJKAndLatin: cjkSpacing)
-    }
-
-    /// A failure before any audio was captured (permissions, no input device).
-    private func fail(_ error: any Error) {
-        metrics.record(DictationEvent(date: .now, outcome: .failed, reason: .init(error)))
-        fail(error.localizedDescription)
-    }
-
-    private func fail(_ message: String) {
-        setPhase(.failed(message))
-    }
-
-    private func setPhase(_ newPhase: Phase) {
-        phase = newPhase
-        onHUDVisibilityChange?(isHUDVisible)
-    }
-
-    private var cjkSpacing: Bool { defaults.object(forKey: Self.cjkSpacingKey) as? Bool ?? true }
-
-    /// Vocabulary rules, Chinese script and Chinese/English spacing. Shared by the live
-    /// preview and the typed text so both read the same.
-    private func applyTextRules(_ text: String) -> String {
-        var result = replacements.apply(to: text)
-        if ChineseText.containsCJK(result) {
-            let script = ChineseScript(rawValue: defaults.string(forKey: Self.chineseScriptKey) ?? "") ?? .simplified
-            result = ChineseText.converting(result, to: script)
-            if cjkSpacing { result = ChineseText.spacingCJKAndLatin(result) }
-        }
-        return result
-    }
-
-    /// Transcript → typed text: text rules, then context-aware formatting for the focused field.
-    private func prepareForTyping(_ text: String) -> String {
-        let result = applyTextRules(text)
-        guard defaults.object(forKey: Self.smartFormattingKey) as? Bool ?? true else { return result.trimmed }
-        return TextFormatter.format(result, context: FocusContext.current(), spaceBetweenCJKAndLatin: cjkSpacing)
+    private func record(_ result: SessionResult, into event: inout DictationEvent) {
+        event.engine = result.engine
+        event.language = result.language
+        event.pieces = result.pieces
+        event.emptyPieces = result.emptyPieces
+        if let engine = result.engine { activeEngine = engine }
     }
 
     private func refreshEngineName() async {

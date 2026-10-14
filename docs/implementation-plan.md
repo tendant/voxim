@@ -22,6 +22,19 @@ A local-first macOS menu-bar dictation tool: **hold fn**, speak, release, and th
 - **🌐 key conflict:** System Settings › Keyboard › "Press 🌐 key to" fires on fn release. On this Mac it's set to Start Dictation; the menu warns until it's set to Do Nothing.
 - **App sandbox off**, hardened runtime on. Signed with team `WJTDTA46K5` so the Accessibility grant survives rebuilds.
 
+## State management (2026-10-13 refactor)
+
+- **`DictationMachine`** holds the dictation lifecycle as one enum (`idle(outcome)`, `armed`, `starting(trigger)`, `recording(trigger)`, `finishing(trigger)`, where trigger = hold | hands-free) and a pure `reduce(state, input, facts) → (state, effects)`.
+  - **Inputs:** fn actions plus async results (mic permission, capture failure, auto-stop, finished).
+  - **Effects:** start/discard capture, begin recording, finish, cancel, permission requests, metrics.
+  - **Tests:** table tests, no timers or audio.
+- **`AppController`** feeds inputs and runs effects.
+  - `phase` and `isHandsFree` are derived from the state, not stored flags.
+  - Recording teardown (preview, hands-free monitor) runs whenever the state leaves `recording`.
+- **`Preferences`** is every setting as one typed value. A dictation snapshots it at start, so mid-dictation setting changes don't apply halfway.
+- **`TextPipeline`** handles vocabulary, Chinese script and spacing, and formatting, from that snapshot.
+- Removed the ad-hoc flags `preRolling`, `keyHeld` and the `isReady` checks, and 10 of 11 scattered UserDefaults reads.
+
 ## Code layout (`voxim/`)
 
 ```
