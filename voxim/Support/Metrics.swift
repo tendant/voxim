@@ -62,6 +62,13 @@ nonisolated struct DictationEvent: Codable, Equatable, Sendable {
     var outcome: Outcome
     var reason: Reason?
     var engine: String?
+    /// Recognized language code ("en", "zh", "yue"); never any text.
+    var language: String?
+    /// Recorded with double-tap fn (hands-free); nil for hold-to-talk.
+    var handsFree: Bool?
+    /// Pieces the dictation was split into, and how many came back with no words.
+    var pieces: Int?
+    var emptyPieces: Int?
     var audioSeconds: Double?
     /// Key release → transcript ready.
     var transcribeMS: Double?
@@ -89,6 +96,10 @@ nonisolated struct MetricsSummary: Equatable {
     var totalP50: Double?
     var totalP95: Double?
     var engines: [String: Int] = [:]
+    var languages: [String: Int] = [:]
+    var handsFree = 0
+    var pieces = 0
+    var emptyPieces = 0
 
     var failed: Int { failures.values.reduce(0, +) }
 
@@ -114,6 +125,10 @@ nonisolated struct MetricsSummary: Equatable {
             summary.words += event.words ?? 0
             summary.audioSeconds += event.audioSeconds ?? 0
             if let engine = event.engine { summary.engines[engine, default: 0] += 1 }
+            if let language = event.language { summary.languages[language, default: 0] += 1 }
+            if event.handsFree == true { summary.handsFree += 1 }
+            summary.pieces += event.pieces ?? 0
+            summary.emptyPieces += event.emptyPieces ?? 0
             if let ms = event.transcribeMS { transcribe.append(ms) }
             if event.outcome == .inserted, let ms = event.totalMS { total.append(ms) }
         }

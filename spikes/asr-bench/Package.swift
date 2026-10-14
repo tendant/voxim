@@ -9,6 +9,50 @@ let package = Package(
     ],
     targets: [
         .executableTarget(
+            name: "vad-check",
+            dependencies: [.product(name: "FluidAudio", package: "FluidAudio")],
+            swiftSettings: [
+                .swiftLanguageMode(.v5),
+                .defaultIsolation(MainActor.self),
+                .enableUpcomingFeature("NonisolatedNonsendingByDefault"),
+                .enableUpcomingFeature("InferIsolatedConformances"),
+                .enableUpcomingFeature("MemberImportVisibility"),
+            ]
+        ),
+        .executableTarget(
+            name: "session-check",
+            dependencies: [.product(name: "FluidAudio", package: "FluidAudio")],
+            swiftSettings: [
+                .swiftLanguageMode(.v5),
+                .defaultIsolation(MainActor.self),
+                .enableUpcomingFeature("NonisolatedNonsendingByDefault"),
+                .enableUpcomingFeature("InferIsolatedConformances"),
+                .enableUpcomingFeature("MemberImportVisibility"),
+            ]
+        ),
+        .executableTarget(
+            name: "segment-bench",
+            dependencies: [.product(name: "FluidAudio", package: "FluidAudio")],
+            swiftSettings: [
+                .swiftLanguageMode(.v5),
+                .defaultIsolation(MainActor.self),
+                .enableUpcomingFeature("NonisolatedNonsendingByDefault"),
+                .enableUpcomingFeature("InferIsolatedConformances"),
+                .enableUpcomingFeature("MemberImportVisibility"),
+            ]
+        ),
+        .executableTarget(
+            name: "engine-check",
+            dependencies: [.product(name: "FluidAudio", package: "FluidAudio")],
+            swiftSettings: [
+                .swiftLanguageMode(.v5),
+                .defaultIsolation(MainActor.self),
+                .enableUpcomingFeature("NonisolatedNonsendingByDefault"),
+                .enableUpcomingFeature("InferIsolatedConformances"),
+                .enableUpcomingFeature("MemberImportVisibility"),
+            ]
+        ),
+        .executableTarget(
             name: "zh-bench",
             dependencies: [.product(name: "FluidAudio", package: "FluidAudio")],
             swiftSettings: [

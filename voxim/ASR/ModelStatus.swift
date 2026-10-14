@@ -30,3 +30,12 @@ final class ModelStatus {
         Task { @MainActor in self.update(newState) }
     }
 }
+
+extension ModelLoadEvent {
+    nonisolated var status: ModelStatus.State {
+        switch self {
+        case .downloading(let fraction): .downloading(fraction: fraction)
+        case .compiling: .compiling
+        }
+    }
+}

@@ -8,6 +8,7 @@
 //  while recording, which cancels and is swallowed.
 //
 
+import AppKit
 import CoreGraphics
 import Foundation
 import os
@@ -21,6 +22,15 @@ final class ShortcutManager {
     /// start), `.disarm` if it turns out to be a tap or a modifier, then `.press`/`.release`/`.cancel`.
     private let onAction: (FnHoldDetector.Action) -> Void
     private var detector = FnHoldDetector()
+    private var doubleTap = DoubleTapDetector()
+    /// Whether a double-tap of fn should lock recording on (menu setting).
+    var isDoubleTapEnabled: () -> Bool = { true }
+
+    /// Tells the detector a hands-free recording is running (Esc cancels without fn held).
+    func setHandsFree(_ active: Bool) {
+        detector.handsFree = active
+        doubleTap.reset()
+    }
     private var holdTimer: Task<Void, Never>?
     private var tap: CFMachPort?
     private var runLoopSource: CFRunLoopSource?
@@ -106,9 +116,18 @@ final class ShortcutManager {
         case .disarm:
             holdTimer?.cancel()
             holdTimer = nil
+        case .tap:
+            holdTimer?.cancel()
+            holdTimer = nil
+            if !detector.handsFree, isDoubleTapEnabled(),
+               doubleTap.registerTap(at: ProcessInfo.processInfo.systemUptime) {
+                onAction(.lock)
+                return
+            }
         case .press:
             holdTimer = nil
-        case .release, .cancel:
+            doubleTap.reset()
+        case .release, .cancel, .lock:
             break
         }
         onAction(action)
@@ -118,7 +137,18 @@ final class ShortcutManager {
 /// System Settings › Keyboard › "Press 🌐 key to". Anything but "Do Nothing" also fires
 /// when fn is released, e.g. starting Apple Dictation alongside voxim.
 enum GlobeKeySetting {
+    /// Apple Dictation also listens and types when fn is pressed, so text appears twice.
+    static var startsAppleDictation: Bool { conflictingAction == "Start Dictation" }
+
+    static func openKeyboardSettings() {
+        if let url = URL(string: "x-apple.systempreferences:com.apple.Keyboard-Settings.extension") {
+            NSWorkspace.shared.open(url)
+        }
+    }
+
     static var conflictingAction: String? {
+        // Re-read from disk: the user may have just changed it in System Settings.
+        CFPreferencesAppSynchronize("com.apple.HIToolbox" as CFString)
         let value = CFPreferencesCopyAppValue("AppleFnUsageType" as CFString, "com.apple.HIToolbox" as CFString) as? Int
         switch value {
         case 0: return nil

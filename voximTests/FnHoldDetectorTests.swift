@@ -24,7 +24,7 @@ struct FnHoldDetectorTests {
     @Test func shortTapDoesNothing() {
         var d = FnHoldDetector()
         #expect(d.handle(.flagsChanged(fn)) == .arm)
-        #expect(d.handle(.flagsChanged([])) == .disarm)
+        #expect(d.handle(.flagsChanged([])) == .tap)
         // A late timer from the tap must not start recording.
         #expect(d.handle(.holdElapsed) == nil)
         #expect(!d.isActive)
@@ -97,5 +97,43 @@ struct FnHoldDetectorTests {
         _ = d.handle(.flagsChanged(fn))
         // fn+esc before the threshold is a normal key combo, not a cancel.
         #expect(d.handle(.keyDown(keyCode: esc)) == .disarm)
+    }
+
+    @Test func escCancelsInHandsFreeWithoutFnHeld() {
+        var d = FnHoldDetector()
+        #expect(d.handle(.keyDown(keyCode: esc)) == nil)
+        d.handsFree = true
+        #expect(d.handle(.keyDown(keyCode: esc)) == .cancel)
+        #expect(d.handle(.keyDown(keyCode: leftArrow)) == nil)
+    }
+}
+
+struct DoubleTapDetectorTests {
+    /// Registers taps at the given times; returns which ones completed a double-tap.
+    private func taps(_ times: [Double], resetAfterFirst: Bool = false) -> [Bool] {
+        var detector = DoubleTapDetector()
+        var results: [Bool] = []
+        for (index, time) in times.enumerated() {
+            results.append(detector.registerTap(at: time))
+            if resetAfterFirst && index == 0 { detector.reset() }
+        }
+        return results
+    }
+
+    @Test func twoQuickTapsMakeADoubleTap() {
+        #expect(taps([10.0, 10.3]) == [false, true])
+    }
+
+    @Test func slowTapsDoNot() {
+        // The second slow tap starts a new pair with the third.
+        #expect(taps([10.0, 10.6, 10.9]) == [false, false, true])
+    }
+
+    @Test func aTripleTapIsOneDoubleTapThenAFreshStart() {
+        #expect(taps([1.0, 1.2, 1.4]) == [false, true, false])
+    }
+
+    @Test func resetForgetsAPendingTap() {
+        #expect(taps([1.0, 1.2], resetAfterFirst: true) == [false, false])
     }
 }

@@ -58,6 +58,6 @@ struct VocabularySettingsView: View {
                 .fixedSize(horizontal: false, vertical: true)
         }
         .padding(20)
-        .frame(width: 520)
+        .frame(width: SettingsView.size.width, height: SettingsView.size.height, alignment: .top)
     }
 }

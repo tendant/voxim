@@ -23,6 +23,10 @@ enum FocusContext {
 
     private static let lookBehind = 3
 
+    static var isTerminalFrontmost: Bool {
+        terminalBundleIDs.contains(NSWorkspace.shared.frontmostApplication?.bundleIdentifier ?? "")
+    }
+
     static func current() -> InsertionContext {
         let bundleID = NSWorkspace.shared.frontmostApplication?.bundleIdentifier ?? ""
         return InsertionContext(

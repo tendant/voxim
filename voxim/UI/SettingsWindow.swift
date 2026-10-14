@@ -12,6 +12,7 @@ import AppKit
 import SwiftUI
 
 enum SettingsTab: Hashable {
+    case general
     case vocabulary
     case usage
 }
@@ -50,15 +51,21 @@ final class SettingsWindow: NSObject, NSWindowDelegate {
 
 @Observable
 final class SettingsSelection {
-    var tab: SettingsTab = .vocabulary
+    var tab: SettingsTab = .general
 }
 
 struct SettingsView: View {
     let controller: AppController
     @Bindable var selection: SettingsSelection
 
+    /// Every tab uses this size, so the window doesn't jump when switching tabs.
+    static let size = CGSize(width: 520, height: 560)
+
     var body: some View {
         TabView(selection: $selection.tab) {
+            Tab("General", systemImage: "gearshape", value: SettingsTab.general) {
+                GeneralSettingsView(controller: controller, selection: selection)
+            }
             Tab("Vocabulary", systemImage: "character.book.closed", value: SettingsTab.vocabulary) {
                 VocabularySettingsView(store: controller.replacements)
             }

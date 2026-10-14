@@ -19,15 +19,29 @@ enum MicAccess {
     }
 }
 
+extension SetupSection {
+    /// Something the user must act on (or is waiting for): the menu shows the checklist then.
+    static func needsAttention(_ model: ModelStatus, chinese: ModelStatus?) -> Bool {
+        MicAccess.permission != .granted || !AXAccess.isTrusted || GlobeKeySetting.conflictingAction != nil
+            || model.state != .ready || (chinese.map { $0.state != .ready } ?? false)
+    }
+}
+
 struct SetupSection: View {
     let modelStatus: ModelStatus
+    /// Shown only when the language mode needs the Chinese model.
+    var chineseModelStatus: ModelStatus? = nil
 
     var body: some View {
         TimelineView(.periodic(from: .now, by: 1)) { _ in
             VStack(alignment: .leading, spacing: 6) {
                 microphone
                 accessibility
-                model
+                globeKey
+                model(modelStatus, title: "Speech model", size: "~450 MB", fallback: "Apple's built-in speech")
+                if let chineseModelStatus {
+                    model(chineseModelStatus, title: "Chinese model", size: "~450 MB", fallback: "English (Auto) or Apple 中文")
+                }
             }
             .font(.callout)
         }
@@ -58,26 +72,45 @@ struct SetupSection: View {
         }
     }
 
-    @ViewBuilder private var model: some View {
-        switch modelStatus.state {
+    /// macOS's own 🌐/fn action must be off, or it runs alongside voxim (Apple Dictation types too).
+    @ViewBuilder private var globeKey: some View {
+        if let action = GlobeKeySetting.conflictingAction {
+            VStack(alignment: .leading, spacing: 2) {
+                row("🌐 key", ok: false, detail: action) {
+                    Button("Open Settings") { GlobeKeySetting.openKeyboardSettings() }
+                }
+                Text(action == "Start Dictation"
+                     ? "Apple Dictation would also type what you say. Set “Press 🌐 key to” to Do Nothing."
+                     : "This also fires when you release fn. Set “Press 🌐 key to” to Do Nothing.")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+        } else {
+            row("🌐 key", ok: true)
+        }
+    }
+
+    @ViewBuilder private func model(_ status: ModelStatus, title: String, size: String, fallback: String) -> some View {
+        switch status.state {
         case .starting:
-            row("Speech model", ok: nil, detail: "Loading…")
+            row(title, ok: nil, detail: "Loading…")
         case .downloading(let fraction):
             VStack(alignment: .leading, spacing: 2) {
-                row("Speech model", ok: nil, detail: "Downloading \(Int(fraction * 100))%")
+                row(title, ok: nil, detail: "Downloading \(Int(fraction * 100))%")
                 ProgressView(value: fraction).controlSize(.small)
-                Text("One-time ~450 MB download. Apple's built-in speech is used until it finishes.")
+                Text("One-time \(size) download. \(fallback) is used until it finishes.")
                     .font(.caption)
                     .foregroundStyle(.secondary)
                     .fixedSize(horizontal: false, vertical: true)
             }
         case .compiling:
-            row("Speech model", ok: nil, detail: "Preparing…")
+            row(title, ok: nil, detail: "Preparing…")
         case .ready:
-            row("Speech model", ok: true)
+            row(title, ok: true)
         case .failed(let message):
             VStack(alignment: .leading, spacing: 2) {
-                row("Speech model", ok: false, detail: "Using Apple speech")
+                row(title, ok: false, detail: "Using \(fallback)")
                 Text(message).font(.caption).foregroundStyle(.secondary).lineLimit(2)
             }
         }

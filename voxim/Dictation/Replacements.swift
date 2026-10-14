@@ -34,7 +34,8 @@ nonisolated enum ReplacementEngine {
     }
 
     /// Whole-word, case-insensitive; any run of spaces/hyphens in the phrase matches any other
-    /// ("t mux" matches "T-mux", "t  mux").
+    /// ("t mux" matches "T-mux", "t  mux"). Word boundaries are only enforced against Latin
+    /// letters and digits, since Chinese has no spaces ("我用mux" still matches "mux").
     static func pattern(for spoken: String) -> NSRegularExpression? {
         let words = spoken.trimmed
             .split(whereSeparator: { $0.isWhitespace || $0 == "-" })
@@ -42,7 +43,7 @@ nonisolated enum ReplacementEngine {
         guard !words.isEmpty else { return nil }
         let body = words.joined(separator: "[\\s-]+")
         return try? NSRegularExpression(
-            pattern: "(?<![\\p{L}\\p{N}])" + body + "(?![\\p{L}\\p{N}])",
+            pattern: "(?<![\\p{Latin}\\p{N}])" + body + "(?![\\p{Latin}\\p{N}])",
             options: [.caseInsensitive]
         )
     }

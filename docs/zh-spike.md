@@ -81,6 +81,36 @@ Text handling needed alongside, since it assumes space-separated words:
 - **Simplified ↔ Traditional:** optional conversion for zh_TW / zh_HK users (`StringTransform("Hans-Hant")`).
 - **Metrics:** count CJK characters as words.
 
+## Implemented (2026-10-13)
+
+The Language setting shipped as decided above. The app's real `DictationEngine`, run by `spikes/asr-bench` target `engine-check` over the same 56 clips:
+
+| Mode | English speech | Chinese speech | Mixed |
+|---|---|---|---|
+| English | 6.0% (Parakeet) | 100% | 94.7% |
+| **Auto** | **6.0%** (20/20 routed to Parakeet) | **1.1%** (20/20 → 中文) | 28.8% (3/16 routed to English) |
+| 中文 | 21.6% | **1.1%** | **22.7%** |
+
+**SenseVoice input limit:** the model only accepts 0.2–30 s per call (larger inputs throw). `SenseVoiceTranscriber` splits longer audio into ≤28 s pieces, cutting at the quietest 100 ms in each piece's last 3 s, and joins the text (no spaces between Chinese). A 153 s Mandarin monologue: 1.1% CER (Auto), 1.5% (中文).
+
+**Sticky language in Auto (2026-10-13).** With pieces, Auto decided the language per sentence, and per preview refresh, so short pieces flipped between Chinese and English. Now:
+
+1. **The dictation's language becomes a hint** for later pieces and the preview: the language of the first piece that produced words.
+2. **Inside a Chinese dictation, short pieces (< 4 s) stay Chinese.** Leaving Chinese also requires that SenseVoice *forced to Chinese* finds no Chinese characters.
+3. **Pieces routed to Chinese against SenseVoice's own tag are re-transcribed forced-zh.** Its auto transcript is English-ish gibberish then ("Howo Y outhes." for 跑一下 tests).
+4. **Chinese characters always win.**
+
+Real engines (`session-check`, three runs each):
+
+| Clip | Before | After |
+|---|---|---|
+| Chinese + English terms, Auto | 15.8–23.0%, with 0–1 pieces flipped to Parakeet | **10.8%** every run, 13/13 pieces Chinese |
+| same clip, 中文 mode | 10.1% | 10.1–14.4% |
+| Alternating en / zh / mixed sentences, Auto | 10.6% (spike, no stickiness) | **9.5%** |
+| English 133 s / Chinese 153 s | unchanged: all Parakeet / all SenseVoice | |
+
+**Trade-off:** short English sentences inside a Chinese dictation are transcribed by SenseVoice, which is weaker than Parakeet on jargon.
+
 ## Open risk
 
 The two weak spots are short mixed utterances (LID picks English) and English terms inside Chinese sentences. Both need a **real-voice test** before deciding the default mode for bilingual users. Record about 15 phrases (zh, en, mix) as `NN.wav` with a matching manifest and rerun `zh-bench`.

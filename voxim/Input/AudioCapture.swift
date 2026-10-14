@@ -51,6 +51,13 @@ nonisolated protocol AudioCapturing: AnyObject {
     func start() throws
     /// Stops capture and returns everything recorded since `start()`.
     func stop() -> AudioClip
+    /// Everything recorded so far, without stopping (for live preview).
+    func snapshot() -> AudioClip
+    /// Receives each new buffer as it's captured (audio thread). Set before `start()`.
+    /// While set, audio is handed off rather than also kept here.
+    var onSamples: (@Sendable ([Float]) -> Void)? { get set }
+    /// Seconds captured since the last `start()` (also after `stop()`).
+    var capturedSeconds: TimeInterval { get }
 }
 
 /// Push-to-talk microphone capture. The engine runs only between `start()` and `stop()`;
@@ -60,6 +67,17 @@ nonisolated final class AudioCapture: AudioCapturing, @unchecked Sendable {
     private let lock = NSLock()
     private var samples: [Float] = []
     private var isRunning = false
+    private var _onSamples: (@Sendable ([Float]) -> Void)?
+    private var capturedCount = 0
+
+    var capturedSeconds: TimeInterval {
+        lock.withLock { Double(capturedCount) / AudioClip.sampleRate }
+    }
+
+    var onSamples: (@Sendable ([Float]) -> Void)? {
+        get { lock.withLock { _onSamples } }
+        set { lock.withLock { _onSamples = newValue } }
+    }
 
     private let targetFormat = AVAudioFormat(
         commonFormat: .pcmFormatFloat32, sampleRate: AudioClip.sampleRate, channels: 1, interleaved: false
@@ -91,7 +109,10 @@ nonisolated final class AudioCapture: AudioCapturing, @unchecked Sendable {
         guard let converter = AVAudioConverter(from: inputFormat, to: targetFormat) else {
             throw AudioCaptureError.conversionFailed
         }
-        lock.withLock { samples.removeAll(keepingCapacity: true) }
+        lock.withLock {
+            samples.removeAll(keepingCapacity: true)
+            capturedCount = 0
+        }
         let targetFormat = self.targetFormat
         input.installTap(onBus: 0, bufferSize: 4096, format: inputFormat) { [weak self] buffer, _ in
             let capacity = AVAudioFrameCount(
@@ -111,8 +132,15 @@ nonisolated final class AudioCapture: AudioCapturing, @unchecked Sendable {
                 return buffer
             }
             guard status != .error, let channel = output.floatChannelData?[0] else { return }
-            let chunk = UnsafeBufferPointer(start: channel, count: Int(output.frameLength))
-            self.lock.withLock { self.samples.append(contentsOf: chunk) }
+            let chunk = Array(UnsafeBufferPointer(start: channel, count: Int(output.frameLength)))
+            let push = self.lock.withLock {
+                self.capturedCount += chunk.count
+                // A consumer (the dictation session) owns the audio; don't keep a second copy,
+                // so long hands-free recordings use constant memory.
+                if self._onSamples == nil { self.samples.append(contentsOf: chunk) }
+                return self._onSamples
+            }
+            push?(chunk)
         }
         engine.prepare()
         do {
@@ -122,6 +150,10 @@ nonisolated final class AudioCapture: AudioCapturing, @unchecked Sendable {
             throw error
         }
         isRunning = true
+    }
+
+    func snapshot() -> AudioClip {
+        lock.withLock { AudioClip(samples: samples) }
     }
 
     func stop() -> AudioClip {

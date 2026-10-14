@@ -27,8 +27,8 @@ A local-first macOS menu-bar dictation tool: **hold fn**, speak, release, and th
 ```
 App/        voximApp (MenuBarExtra + HUD wiring), AppController (idle→recording→transcribing→inserted|failed)
 Input/      ShortcutManager (fn event tap, Esc cancel, 🌐 setting check), FnHoldDetector, AudioCapture (16 kHz mono, memory only)
-ASR/        Transcriber, AppleSpeechTranscriber, ParakeetTranscriber, FallbackTranscriber, ModelStatus
-Dictation/  DictationSink, PasteInserter (clipboard snapshot/restore + ⌘V), AXAccess, FocusedApp, FocusContext (chars before cursor, terminal detection), TextFormatter, Replacements (rules + store)
+ASR/        Transcriber, AppleSpeechTranscriber, ParakeetTranscriber, FallbackTranscriber, SenseVoiceTranscriber, DictationEngine (LanguageMode, LanguageRouting), ModelStatus
+Dictation/  DictationSink, PasteInserter (clipboard snapshot/restore + ⌘V), AXAccess, FocusedApp, FocusContext (chars before cursor, terminal detection), TextFormatter, Replacements (rules + store), ChineseText (CJK detection, spacing, script, word count)
 UI/         MenuView (status, shortcut hint), SetupSection (mic / Accessibility / model checklist), VocabularySettingsView + UsageView (Settings tabs), StatusHUD (non-activating, never key)
 Support/    Log (no transcript contents), Metrics (events, summary, JSONL store), Duration helpers
 ```
@@ -44,6 +44,9 @@ Support/    Log (no transcript contents), Metrics (events, summary, JSONL store)
 | 5 ✅ | Vocabulary as "when I say → type" replacement rules (Settings window; whole-word, case-insensitive, flexible spacing/hyphens, longest phrase first), applied before smart formatting. Acoustic biasing (FluidAudio CTC boosting, +~100 MB model) deferred | Day 1 misrecognitions (MUX→tmux, within PM→with npm) fixed by rules; homophones (pain/pane) out of reach |
 | 6 ✅ | Local metrics: one text-free event per push-to-talk (outcome, failure reason, engine, audio length, release→transcript and transcript→⌘V timings, word count) in `~/Library/Application Support/voxim/metrics.jsonl`, 90-day retention; menu "today" line; Settings › Usage tab (period, p50/p95, failures by reason, reset, reveal file). Then dogfooding | Daily-use report and go/no-go |
 | 7 🟡 | Pre-roll (menu toggle, default on): mic starts the moment fn goes down alone (only if mic + Accessibility are already granted, no HUD); a tap or fn+key discards that audio unheard and records nothing in metrics; a qualifying hold keeps it as the start of the clip. Trade-offs: mic indicator flashes on every fn press; Bluetooth headsets may switch to call quality | First word no longer clipped |
+| 8 🟡 | Language setting: English (Parakeet) / Auto (SenseVoice language ID → Parakeet for English, SenseVoice for Chinese and mixed) / 中文 (SenseVoice forced zh; Apple zh_CN while downloading). SenseVoice (~450 MB) downloads only when a Chinese mode is chosen. Chinese-aware formatting (no spaces between Chinese characters, optional Chinese–English spacing, `。` dropped in terminals, no lowercasing after Chinese), Simplified/Traditional output, vocabulary rules match inside Chinese text, CJK characters counted as words, detected language in menu and Usage. See `docs/zh-spike.md` | Real engine on spike clips: Auto en 6.0% / zh 1.1% / mixed 28.8% |
+| 9 🟡 | Live preview (menu toggle, default on): while fn is held, the HUD shows the words recognized so far by re-transcribing the growing clip (~every 0.45 s, backing off to keep transcription under half the time); the final text is still typed once on release. Preview text is on screen only, never typed, stored or counted. Typing live into the app was rejected: engines revise earlier words, which would mean deleting/retyping in arbitrary apps | Per pass: English 39–206 ms, Auto 81–470 ms, 中文 13–261 ms for 2–86 s of audio |
+| 10 🟡 | Long dictation: pieces cut at pauses (Silero VAD) and transcribed while recording; **Type as you speak** (default on) types each sentence as soon as it's finished; live preview only re-transcribes the piece in progress. See `docs/long-dictation-plan.md` | Release → text ~60–120 ms regardless of length |
 
 ### Installable build
 
@@ -61,6 +64,8 @@ Support/    Log (no transcript contents), Metrics (events, summary, JSONL store)
 - Unit: `AppController` with fake mic/permissions/engine/sink (pre-roll kept through recording, tap discards unheard, toggle off, no mic grant → no pre-roll and no prompt, no Accessibility, Esc, fn during transcription).
 - Unit: metrics (summary/percentiles, persistence, 90-day pruning, corrupt line, reset, stored keys are text-free, error→reason mapping).
 - Unit: `ReplacementEngine` (Day 1 outputs, whole words, flexible spacing, longest-first, literal regex chars, Unicode boundaries).
+- Unit: language routing, Chinese text helpers, Chinese-aware formatting and vocabulary, language mode in the controller.
+- Integration: `spikes/asr-bench` `engine-check` runs the app's real `DictationEngine` in every mode over a clip set.
 - Unit: `TextFormatter` (start of field, after sentence end, mid-sentence, special first words, brackets/prefixes, terminal style).
 - Unit: `PasteInserter` with a private pasteboard and fake ⌘V poster (restore, transient marker, empty clipboard, clipboard changed meanwhile, secure input refused).
 - Manual matrix: target apps × {normal, focus switched mid-speech, password field, no focused field, Accessibility revoked, mic denied}.
@@ -93,4 +98,4 @@ Also note by hand when speaking helped or hurt versus typing; the metrics delibe
 - **Acoustic vocabulary biasing:** FluidAudio CTC boosting (+~100 MB model) if replacement rules aren't enough.
 - **Per-app paste timing:** tune the 250 ms clipboard-restore delay for apps that paste the old clipboard.
 - **Notarization + prebuilt download:** needed before offering a release on GitHub; today visitors build from source.
-- **Long dictation:** verified fine up to 133 s (see `docs/asr-spike.md`); no streaming needed.
+- **Long dictation:** verified fine up to 133 s English (Parakeet) and 153 s Chinese (SenseVoice, split into ≤28 s pieces at quiet points; the model rejects >30 s).

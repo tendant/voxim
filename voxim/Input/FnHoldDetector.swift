@@ -28,7 +28,15 @@ nonisolated struct FnHoldDetector {
         case release
         /// Esc while recording: discard the recording. The Esc must be swallowed.
         case cancel
+        /// fn pressed and released alone, quicker than the hold threshold. Ends the arm like
+        /// `.disarm`; two in a row make a double-tap (see `DoubleTapDetector`).
+        case tap
+        /// A double-tap of fn: lock recording on (hands-free). Emitted by `ShortcutManager`.
+        case lock
     }
+
+    /// Set while a hands-free recording runs: Esc then cancels even though fn isn't held.
+    var handsFree = false
 
     static let escapeKey = Int64(kVK_Escape)
 
@@ -59,13 +67,16 @@ nonisolated struct FnHoldDetector {
         case (.armed, .flagsChanged(let flags)):
             if !flags.contains(.maskSecondaryFn) {
                 state = .idle  // a tap, not a hold
-                return .disarm
+                return .tap
             }
             if !flags.intersection(Self.otherModifiers).isEmpty {
                 state = .suppressed
                 return .disarm
             }
             return nil
+
+        case (.idle, .keyDown(let keyCode)) where keyCode == Self.escapeKey && handsFree:
+            return .cancel
 
         case (.armed, .keyDown):
             state = .suppressed
@@ -103,5 +114,25 @@ nonisolated struct FnHoldDetector {
         case .armed: return .disarm
         case .idle, .suppressed: return nil
         }
+    }
+}
+
+/// Two fn taps whose releases are within `window` seconds make a double-tap.
+nonisolated struct DoubleTapDetector {
+    var window: TimeInterval = 0.45
+    private var lastTap: TimeInterval?
+
+    /// Records a tap at `time` (seconds, monotonic); true when it completes a double-tap.
+    mutating func registerTap(at time: TimeInterval) -> Bool {
+        if let lastTap, time - lastTap <= window {
+            self.lastTap = nil
+            return true
+        }
+        lastTap = time
+        return false
+    }
+
+    mutating func reset() {
+        lastTap = nil
     }
 }

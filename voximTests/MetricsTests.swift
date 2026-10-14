@@ -90,10 +90,12 @@ struct MetricsTests {
         // Guard against someone adding transcript/selection text to the event later.
         let store = MetricsStore(fileURL: fileURL, now: now)
         store.record(DictationEvent(date: now, outcome: .failed, reason: .secureInput, engine: "Apple SpeechTranscriber",
+                                    language: "zh", handsFree: true, pieces: 2, emptyPieces: 1,
                                     audioSeconds: 1, transcribeMS: 1, typeMS: 1, words: 3))
         let line = try Data(contentsOf: fileURL)
         let keys = Set(try #require(JSONSerialization.jsonObject(with: line) as? [String: Any]).keys)
-        #expect(keys == ["date", "outcome", "reason", "engine", "audioSeconds", "transcribeMS", "typeMS", "words"])
+        #expect(keys == ["date", "outcome", "reason", "engine", "language", "handsFree", "pieces", "emptyPieces",
+                         "audioSeconds", "transcribeMS", "typeMS", "words"])
     }
 
     @Test func errorsMapToReasons() {

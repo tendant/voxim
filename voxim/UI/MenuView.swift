@@ -7,9 +7,6 @@ import SwiftUI
 
 struct MenuView: View {
     @Bindable var controller: AppController
-    @AppStorage(AppController.smartFormattingKey) private var smartFormatting = true
-    @AppStorage(AppController.preRollKey) private var preRoll = true
-    @State private var launchAtLoginEnabled = false
     /// The menu-bar panel hosting this view. It only auto-closes when voxim deactivates, so
     /// opening voxim's own Settings window must close it explicitly.
     @State private var menuWindow: NSWindow?
@@ -26,60 +23,27 @@ struct MenuView: View {
                 .font(.caption.monospacedDigit())
                 .foregroundStyle(.secondary)
 
-
-            Divider()
-            SetupSection(modelStatus: controller.modelStatus)
-
-            Divider()
-            HStack {
-                Text("Hold to dictate")
-                Spacer()
-                Text(ShortcutManager.displayName)
-                    .font(.body.monospaced())
-                    .padding(.horizontal, 6)
-                    .padding(.vertical, 2)
-                    .background(.quaternary, in: RoundedRectangle(cornerRadius: 4))
+            // Setup only appears while something needs attention (re-checked every second).
+            TimelineView(.periodic(from: .now, by: 1)) { _ in
+                if SetupSection.needsAttention(controller.modelStatus, chinese: chineseStatus) {
+                    VStack(alignment: .leading, spacing: 8) {
+                        Divider()
+                        SetupSection(modelStatus: controller.modelStatus, chineseModelStatus: chineseStatus)
+                    }
+                }
             }
-            Text("Hold fn until the HUD appears, speak, then release. Text is typed where your cursor is; voxim never presses Return.")
+
+            Divider()
+            Picker("Language", selection: $controller.languageMode) {
+                ForEach(LanguageMode.allCases) { Text($0.label).tag($0) }
+            }
+            .pickerStyle(.segmented)
+            .labelsHidden()
+            Text("Hold fn to dictate · double-tap fn for hands-free")
                 .font(.caption)
                 .foregroundStyle(.secondary)
-                .fixedSize(horizontal: false, vertical: true)
-            Toggle(isOn: $smartFormatting) {
-                VStack(alignment: .leading, spacing: 2) {
-                    Text("Smart formatting")
-                    Text("Adds a space and lowercases mid-sentence; terminal style (no trailing period, lowercase start) in terminal apps.")
-                        .font(.caption)
-                        .foregroundStyle(.secondary)
-                        .fixedSize(horizontal: false, vertical: true)
-                }
-            }
-            .toggleStyle(.switch)
-            .controlSize(.small)
-            Toggle(isOn: $preRoll) {
-                VStack(alignment: .leading, spacing: 2) {
-                    Text("Capture from fn press")
-                    Text("Starts the mic as soon as fn goes down so the first word isn't cut off. The mic indicator then flashes on every fn press, and Bluetooth headsets may briefly switch to call quality.")
-                        .font(.caption)
-                        .foregroundStyle(.secondary)
-                        .fixedSize(horizontal: false, vertical: true)
-                }
-            }
-            .toggleStyle(.switch)
-            .controlSize(.small)
-            HStack {
-                Text(vocabularySummary).font(.callout)
-                Spacer()
-                Button("Edit…") { openSettings(tab: .vocabulary) }
-            }
-            if let action = GlobeKeySetting.conflictingAction {
-                Text("Your 🌐 key is set to “\(action)”, which also fires when you release fn. Set System Settings › Keyboard › “Press 🌐 key to” to Do Nothing.")
-                    .font(.caption)
-                    .foregroundStyle(.orange)
-                    .fixedSize(horizontal: false, vertical: true)
-            }
 
             Divider()
-            launchAtLogin
             HStack {
                 Button {
                     openSettings()
@@ -98,33 +62,22 @@ struct MenuView: View {
         })
     }
 
+    private var chineseStatus: ModelStatus? {
+        controller.languageMode.needsChineseModel ? controller.chineseModelStatus : nil
+    }
+
     private func openSettings(tab: SettingsTab? = nil) {
         menuWindow?.close()
         SettingsWindow.shared.show(controller, tab: tab)
     }
 
-    @ViewBuilder private var launchAtLogin: some View {
-        if LoginItem.isInstalledCopy {
-            Toggle("Launch at login", isOn: Binding(
-                get: { launchAtLoginEnabled },
-                set: { enabled in
-                    LoginItem.setEnabled(enabled)
-                    launchAtLoginEnabled = LoginItem.isEnabled
-                }
-            ))
-            .toggleStyle(.switch)
-            .controlSize(.small)
-            .onAppear { launchAtLoginEnabled = LoginItem.isEnabled }
-            if LoginItem.needsApproval {
-                Button("Allow in Login Items settings…") { LoginItem.openSettings() }
-                    .buttonStyle(.link)
-                    .font(.caption)
-            }
-        } else {
-            Text("Launch at login is available once voxim is installed in /Applications (scripts/install.sh).")
-                .font(.caption)
-                .foregroundStyle(.secondary)
-                .fixedSize(horizontal: false, vertical: true)
+    private var typedStatus: String {
+        switch controller.lastLanguage {
+        case "zh": "Typed into the focused field · 中文"
+        case "yue": "Typed into the focused field · 粵語"
+        case "mixed": "Typed into the focused field · 中文 + English"
+        case "en" where controller.languageMode != .english: "Typed into the focused field · English"
+        default: "Typed into the focused field"
         }
     }
 
@@ -136,24 +89,17 @@ struct MenuView: View {
         return parts.joined(separator: " · ")
     }
 
-    private var vocabularySummary: String {
-        switch controller.replacements.rules.count {
-        case 0: "No custom words"
-        case 1: "1 custom word"
-        case let n: "\(n) custom words"
-        }
-    }
-
     @ViewBuilder private var status: some View {
         switch controller.phase {
         case .idle:
             Label("Ready", systemImage: "checkmark.circle").foregroundStyle(.green)
         case .recording:
-            Label("Recording", systemImage: "record.circle.fill").foregroundStyle(.red)
+            Label(controller.isHandsFree ? "Recording (hands-free)" : "Recording",
+                  systemImage: controller.isHandsFree ? "lock.fill" : "record.circle.fill").foregroundStyle(.red)
         case .transcribing:
             Label("Transcribing…", systemImage: "waveform")
         case .inserted:
-            Label("Typed into the focused field", systemImage: "checkmark.circle.fill").foregroundStyle(.green)
+            Label(typedStatus, systemImage: "checkmark.circle.fill").foregroundStyle(.green)
         case .failed(let message):
             Label(message, systemImage: "exclamationmark.triangle.fill").foregroundStyle(.orange)
         }
