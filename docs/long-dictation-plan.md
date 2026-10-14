@@ -127,3 +127,14 @@ The user wanted hands-free to wait longer and idle in the background:
 - **Idle pill:** after 5 s without speech, the HUD shrinks to a small "🔒 Hands-free · listening · m:ss" pill. It expands again when speech or preview text appears, and never disappears while the mic is on.
 - **No transcribing silence:** forced 25 s cuts of pieces with no speech are dropped instead of transcribed, which would have cost CPU and risked engines "hearing" stray words.
 - **Constant memory:** `AudioCapture` no longer keeps its own copy of audio while a session consumes it (previously ~230 MB per hour). It only counts captured seconds for metrics.
+
+## Pause and resume on app switch (2026-10-13)
+
+Type as you speak used to stop at the first app switch and offer the rest to copy at the end. Now:
+
+- **Pausing:** when the focus check finds another app in front, `ProgressiveTyper` pauses. It waits (polling the frontmost app every 200 ms) until the dictation's original app is frontmost again, then retries that sentence. Later sentences wait in the ordered piece stream, so order is preserved.
+- **While paused:** recording continues; the HUD shows "Paused — return to Notes to keep typing" (it never collapses to the idle pill while paused).
+- **Finishing while away** (fn release, hands-free tap or auto-stop): the typer stops waiting, typed text stays, and the rest is offered to copy. **Esc** ends the wait and types nothing more.
+- **Only app switches pause.** Secure input and "no focused field" still stop typing.
+- **Same app:** switching to another field in the original app isn't detected; text goes to the new cursor position.
+- **Tests:** 3 new (away and back with queued sentences, finishing while away, Esc while paused); the old "focus change stops typing" test now asserts a brief switch resumes with nothing lost.

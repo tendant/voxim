@@ -32,7 +32,8 @@ struct TypeAsYouSpeakTests {
         return AppController(
             sink: sink, metrics: metrics, capture: capture, permissions: permissions,
             engine: engine, voiceActivity: nil, speechClassifier: { LoudnessClassifier() },
-            isTerminalFrontmost: { terminal }, defaults: defaults
+            isTerminalFrontmost: { terminal }, currentFocus: { FocusedApp(pid: 1, name: "Notes") },
+            defaults: defaults
         )
     }
 
@@ -108,7 +109,9 @@ struct TypeAsYouSpeakTests {
         #expect(sink.inserted == ["p0 p1"])
     }
 
-    @Test func focusChangeStopsTypingAndOffersTheRest() async throws {
+    @Test func aBriefFocusChangePausesThenResumesWithNothingLost() async throws {
+        // The second paste finds another app in front; by the time typing checks again the user
+        // is back, so it resumes (see PauseResumeTests for longer absences).
         sink.failOnCall = 1
         let controller = makeController()
         startRecording(controller)
@@ -118,10 +121,10 @@ struct TypeAsYouSpeakTests {
 
         try await Task.sleep(for: AppController.minimumHold)
         controller.handle(.release)
-        try await waitUntil { if case .failed = controller.phase { true } else { false } }
+        try await waitUntil { controller.phase == .inserted }
 
-        #expect(sink.inserted == ["p0"])
-        #expect(controller.undelivered == "p1 p2")
-        #expect(metrics.events.last?.reason == .focusChanged)
+        // p2 is the last sentence plus the fake mic's final second (no pause between them).
+        #expect(sink.inserted == ["p0", " p1", " p2"])
+        #expect(controller.undelivered.isEmpty)
     }
 }

@@ -83,6 +83,8 @@ final class AppController {
     private(set) var handsFreeNotice: String?
     /// Hands-free and nobody has spoken for a few seconds: the HUD shrinks to a small pill.
     private(set) var isListeningIdle = false
+    /// Typing is paused because another app is in front; the app to return to.
+    private(set) var typingPausedFor: String?
 
     var phase: Phase {
         switch state {
@@ -132,6 +134,8 @@ final class AppController {
     private let voiceActivity: VoiceActivityModel?
     private let speechClassifier: (@Sendable () -> (any SpeechClassifier)?)?
     private let isTerminalFrontmost: () -> Bool
+    /// The frontmost app (injectable so tests can switch apps).
+    private let currentFocus: @MainActor () -> FocusedApp?
     private let injectedHandsFreeLimits: HandsFreeLimits?
     private let sink: any DictationSink
     private let capture: any AudioCapturing
@@ -162,11 +166,13 @@ final class AppController {
         voiceActivity: VoiceActivityModel? = VoiceActivityModel(),
         speechClassifier: (@Sendable () -> (any SpeechClassifier)?)? = nil,
         isTerminalFrontmost: @escaping () -> Bool = { FocusContext.isTerminalFrontmost },
+        currentFocus: @escaping @MainActor () -> FocusedApp? = { FocusedApp.current },
         handsFreeLimits: HandsFreeLimits? = nil,
         defaults: UserDefaults = .standard
     ) {
         self.injectedHandsFreeLimits = handsFreeLimits
         self.isTerminalFrontmost = isTerminalFrontmost
+        self.currentFocus = currentFocus
         self.voiceActivity = voiceActivity
         self.speechClassifier = speechClassifier
         self.metrics = metrics
@@ -332,6 +338,11 @@ final class AppController {
                 insert: { [weak self] text in
                     guard let self else { throw CancellationError() }
                     return try await self.sink.insert(text, expecting: self.focusAtStart)
+                },
+                waitForFocus: { [weak self] in await self?.waitForHomeApp() ?? false },
+                onPauseChange: { [weak self] app in
+                    self?.typingPausedFor = app
+                    self?.onHUDContentChange?()
                 }
             )
         }
@@ -348,12 +359,23 @@ final class AppController {
         session = nil
         typer?.cancel()
         typer = nil
+        typingPausedFor = nil
+    }
+
+    /// Polls until the app the dictation started in is frontmost again (or the wait is cancelled).
+    private func waitForHomeApp() async -> Bool {
+        guard let home = focusAtStart else { return false }
+        while !Task.isCancelled {
+            if currentFocus()?.pid == home.pid { return true }
+            try? await Task.sleep(for: .milliseconds(200))
+        }
+        return false
     }
 
     private func beginRecording(_ trigger: DictationMachine.Trigger) {
         pressStarted = .now
         recordingStartedAt = .now
-        focusAtStart = FocusedApp.current
+        focusAtStart = currentFocus()
         undelivered = ""
         if trigger == .handsFree { startHandsFreeMonitor() }
         startLivePreview()
@@ -538,7 +560,10 @@ final class AppController {
         if handsFree { event.handsFree = true }
         let result = await session.finish()
         let finishedAt = ContinuousClock.now
+        // If typing is paused (user is in another app), don't wait for them to come back.
+        typer.finishWithoutWaiting()
         await typer.wait()
+        typingPausedFor = nil
         event.transcribeMS = (finishedAt - releasedAt).timeInterval * 1000
         if let typedAt = typer.lastTypedAt { event.typeMS = max(0, (typedAt - finishedAt).timeInterval * 1000) }
         record(result, into: &event)

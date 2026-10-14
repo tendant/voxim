@@ -22,7 +22,7 @@ voxim is a tiny menu-bar app that turns the **fn** key into a push-to-talk butto
 - **Formats for where you are.** Mid-sentence it adds the space and drops the capital. In a terminal it drops the trailing period ("Git status." → `git status`).
 - **English and 中文.** Auto mode detects the language each time you speak: English goes to Parakeet, Chinese and mixed speech ("帮我跑一下 unit tests") to SenseVoice. Simplified or Traditional output.
 - **Teach it your words.** "When I say *T mux*, type *tmux*" rules fix the names and jargon it keeps getting wrong.
-- **Safe by default.** It won't type into password fields. If focus moved while you were talking, it hands you the text to copy instead of typing into the wrong app.
+- **Safe by default.** It won't type into password fields. If you switch to another app mid-dictation, typing pauses and picks up where it left off when you come back; it never types into the wrong app.
 
 ## How it works
 

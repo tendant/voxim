@@ -59,7 +59,7 @@ struct HUDView: View {
 
     private var isCompact: Bool {
         controller.phase == .recording && controller.isHandsFree && controller.isListeningIdle
-            && controller.livePreview.isEmpty
+            && controller.livePreview.isEmpty && controller.typingPausedFor == nil
     }
 
     /// Hands-free with nobody speaking: a small but always-visible "mic is on" indicator.
@@ -108,7 +108,7 @@ struct HUDView: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 8) {
             switch controller.phase {
-            case .recording where controller.isHandsFree && controller.isListeningIdle && controller.livePreview.isEmpty:
+            case .recording where isCompact:
                 idlePill
             case .recording:
                 if controller.isHandsFree {
@@ -122,6 +122,11 @@ struct HUDView: View {
                             .font(.caption)
                             .foregroundStyle(.secondary)
                     }
+                }
+                if let app = controller.typingPausedFor {
+                    Label("Paused — return to \(app) to keep typing", systemImage: "pause.circle.fill")
+                        .font(.callout)
+                        .foregroundStyle(.orange)
                 }
                 if GlobeKeySetting.startsAppleDictation {
                     Label("Apple Dictation is also listening, so text may appear twice. Set Keyboard › “Press 🌐 key to” to Do Nothing.",
